@@ -1,8 +1,34 @@
 # sdf-view
 
-A Rust library for rendering a 3D signed distance function (SDF), defined by
-`float sdf(vec3 p)` in GLSL, to an RGBA image or PNG using wgpu. Rendering is
-headless and does not require a window. The CLI is still a placeholder.
+A Rust library and CLI for rendering a 3D signed distance function (SDF), defined
+by `float sdf(vec3 p)` in GLSL, to an RGBA image or PNG using wgpu. Rendering is
+headless and does not require a window.
+
+## CLI usage
+
+```sh
+cargo run -- examples/sphere.glsl -o sphere.png
+cargo run -- examples/sphere.glsl -o sphere.png --width 1024 --height 768
+```
+
+After building, use the binary directly:
+
+```sh
+./target/debug/sdf-view <INPUT> --output <PNG> [--width <PIXELS>] [--height <PIXELS>]
+./target/debug/sdf-view --help
+```
+
+The input must be a UTF-8 GLSL file defining `float sdf(vec3 p)`, without
+`#version` or `main`. The output path is required and existing files are
+overwritten. Its parent directory must already exist. Image dimensions default
+to 512 by 512 and must be positive integers within the graphics device limits.
+The camera, lighting, and shader restrictions are described below.
+
+Successful renders report the output path and dimensions on stderr. Errors also
+go to stderr: argument errors exit with code 2, and read, render, or write errors
+exit with code 1. `--help` and `--version` work without a graphics adapter.
+Rendering on NixOS may require the temporary Vulkan loader setup below.
+
 
 ## Library usage
 
@@ -37,8 +63,7 @@ with Y up and a 45-degree vertical field of view. It traces up to 256 steps with
 a 100-unit distance limit and a 0.001-unit surface tolerance. SDFs must provide
 true signed distances or conservative distance estimates. Surfaces have a blue
 material with ambient and directional lighting; the background is transparent
-black. Camera and shading customization, antialiasing, and CLI argument parsing
-are not implemented yet.
+black. Camera and shading customization and antialiasing are not implemented yet.
 
 Run the sphere example:
 
@@ -72,7 +97,9 @@ cargo clippy --all-targets -- -D warnings
 adapter. It checks sphere silhouettes against analytic projections at multiple
 aspect ratios, padded GPU readback rows, image orientation, PNG round trips,
 empty scenes, and recovery after shader errors. It fails if an adapter is
-unavailable. For checks without a graphics adapter, use `cargo test --lib`.
+unavailable. CLI integration tests also exercise PNG rendering and runtime errors.
+For checks without a graphics adapter, use `cargo test --lib` and
+`cargo test --test cli help_version_and_invalid_arguments`.
 
 ### Vulkan on NixOS
 
