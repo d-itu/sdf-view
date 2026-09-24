@@ -29,6 +29,11 @@
             ];
 
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
+
+            # wgpu loads Vulkan dynamically, so it needs a runtime search path.
+            shellHook = ''
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ]}''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            '';
           };
         }
       );

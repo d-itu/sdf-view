@@ -1,13 +1,18 @@
 //! Headless rendering of GLSL signed distance functions with wgpu.
 //!
-//! The camera is at `(0, 0, 3)`, looks toward the origin with Y up, and has a
-//! 45-degree vertical field of view. Surfaces receive directional lighting;
+//! Camera and directional lighting are configurable through [`RenderOptions`].
+//! By default the camera is at `(0, 0, 3)`, looks toward the origin with Y up,
+//! and has a 45-degree vertical field of view;
 //! missed rays produce transparent black pixels. This blocking API targets
 //! native applications and requires a working wgpu graphics adapter.
 
 use std::{borrow::Cow, fs::File, io::BufWriter, io::Write, path::Path};
 
 use futures::{channel::oneshot, executor::block_on};
+
+mod scene;
+use scene::glsl_vec3;
+pub use scene::{Camera, DirectionalLight};
 
 /// Errors from initialization, rendering, or PNG output.
 #[derive(Debug, thiserror::Error)]
@@ -18,6 +23,8 @@ pub enum Error {
     Device(#[from] wgpu::RequestDeviceError),
     #[error("invalid image dimensions: {0}")]
     Dimensions(&'static str),
+    #[error("invalid render settings: {0}")]
+    Settings(&'static str),
     #[error("shader or GPU validation failed: {0}")]
     Gpu(#[from] wgpu::Error),
     #[error("GPU polling failed: {0}")]
@@ -34,11 +41,13 @@ pub enum Error {
     Io(#[from] std::io::Error),
 }
 
-/// Output dimensions. Both must be nonzero and fit the device limits.
+/// Image dimensions, camera, and lighting for a render.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOptions {
     pub width: u32,
     pub height: u32,
+    pub camera: Camera,
+    pub light: DirectionalLight,
 }
 
 impl Default for RenderOptions {
@@ -46,7 +55,22 @@ impl Default for RenderOptions {
         Self {
             width: 512,
             height: 512,
+            camera: Camera::default(),
+            light: DirectionalLight::default(),
         }
+    }
+}
+
+impl RenderOptions {
+    /// Validate dimensions and scene settings without initializing a GPU.
+    /// Device-specific size limits are checked separately by `Renderer::render`.
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.width == 0 || self.height == 0 {
+            return Err(Error::Dimensions("width and height must be nonzero"));
+        }
+        self.camera.basis()?;
+        self.light.normalized_direction()?;
+        Ok(())
     }
 }
 
@@ -143,6 +167,7 @@ impl Renderer {
     /// conservative distance estimate) for reliable results.
     /// Compilation and validation errors are returned instead of panicking.
     pub fn render(&mut self, sdf: &str, options: RenderOptions) -> Result<Image, Error> {
+        options.validate()?;
         let limits = self.device.limits();
         let layout = ReadbackLayout::new(options, &limits)?;
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -164,10 +189,32 @@ impl Renderer {
         options: RenderOptions,
         layout: ReadbackLayout,
     ) -> Result<Image, Error> {
+        let basis = options.camera.basis()?;
+        let light_direction = options.light.normalized_direction()?;
         let source = format!(
-            "#version 450\nconst vec2 sdf_view_resolution = vec2({}.0, {}.0);\n#line 1 1\n{}\n#line 1 0\n{}",
+            "#version 450\n\
+             const vec2 sdf_view_resolution = vec2({}.0, {}.0);\n\
+             const vec3 sdf_view_origin = {};\n\
+             const vec3 sdf_view_forward = {};\n\
+             const vec3 sdf_view_right = {};\n\
+             const vec3 sdf_view_up = {};\n\
+             const float sdf_view_fov_scale = {:?};\n\
+             const vec3 sdf_view_light_direction = {};\n\
+             const vec3 sdf_view_light_color = {};\n\
+             const float sdf_view_light_intensity = {:?};\n\
+             const float sdf_view_ambient = {:?};\n\
+             #line 1 1\n{}\n#line 1 0\n{}",
             options.width,
             options.height,
+            glsl_vec3(options.camera.position),
+            glsl_vec3(basis.forward),
+            glsl_vec3(basis.right),
+            glsl_vec3(basis.up),
+            (options.camera.vertical_fov_degrees.to_radians() * 0.5).tan(),
+            glsl_vec3(light_direction),
+            glsl_vec3(options.light.color),
+            options.light.intensity,
+            options.light.ambient,
             sdf,
             include_str!("shaders/fragment.glsl")
         );
@@ -317,7 +364,7 @@ struct ReadbackLayout {
 
 impl ReadbackLayout {
     fn new(options: RenderOptions, limits: &wgpu::Limits) -> Result<Self, Error> {
-        let RenderOptions { width, height } = options;
+        let RenderOptions { width, height, .. } = options;
         if width == 0 || height == 0 {
             return Err(Error::Dimensions("width and height must be nonzero"));
         }
@@ -356,9 +403,15 @@ mod tests {
     #[test]
     fn readback_padding() {
         for (width, padded) in [(1, 256), (64, 256), (65, 512), (129, 768)] {
-            let layout =
-                ReadbackLayout::new(RenderOptions { width, height: 3 }, &wgpu::Limits::default())
-                    .unwrap();
+            let layout = ReadbackLayout::new(
+                RenderOptions {
+                    width,
+                    height: 3,
+                    ..Default::default()
+                },
+                &wgpu::Limits::default(),
+            )
+            .unwrap();
             assert_eq!(layout.row_bytes, width * 4);
             assert_eq!(layout.padded_row_bytes, padded);
             assert_eq!(layout.buffer_size, u64::from(padded) * 3);
@@ -371,7 +424,14 @@ mod tests {
         let limits = wgpu::Limits::default();
         for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1), (1, u32::MAX)] {
             assert!(matches!(
-                ReadbackLayout::new(RenderOptions { width, height }, &limits),
+                ReadbackLayout::new(
+                    RenderOptions {
+                        width,
+                        height,
+                        ..Default::default()
+                    },
+                    &limits
+                ),
                 Err(Error::Dimensions(_))
             ));
         }
@@ -383,7 +443,8 @@ mod tests {
             ReadbackLayout::new(
                 RenderOptions {
                     width: 1,
-                    height: 1
+                    height: 1,
+                    ..Default::default()
                 },
                 &tiny_limits
             ),

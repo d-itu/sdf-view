@@ -20,6 +20,23 @@ fn help_version_and_invalid_arguments() {
     for flag in ["<INPUT>", "--output", "--width", "--height"] {
         assert!(text.contains(flag), "missing {flag}");
     }
+    for extra in [
+        vec!["--camera-position", "1,2"],
+        vec!["--camera-position", "NaN,0,3"],
+        vec!["--camera-target", "0,0,3"],
+        vec!["--camera-up", "0,0,1"],
+        vec!["--fov", "180"],
+        vec!["--fov", "NaN"],
+        vec!["--light-direction", "0,0,0"],
+        vec!["--light-color", "1,2,1"],
+        vec!["--light-intensity", "-1"],
+        vec!["--ambient", "inf"],
+    ] {
+        let mut args = vec!["examples/sphere.glsl", "-o", "unused.png"];
+        args.extend(extra);
+        let output = cli(&args);
+        assert_eq!(output.status.code(), Some(2), "{args:?}");
+    }
     assert!(cli(&["--version"]).status.success());
     for args in [
         vec![],
@@ -117,6 +134,47 @@ fn renders_png_and_reports_runtime_errors() {
         let center = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
         assert_eq!(pixels[center + 3], 255);
     }
+
+    let custom = workspace.run(&[
+        "sphere.glsl",
+        "-o",
+        "custom.png",
+        "--width",
+        "65",
+        "--height",
+        "65",
+        "--camera-position",
+        "-3,0,0",
+        "--camera-target",
+        "0,0,0",
+        "--camera-up",
+        "0,-1,0",
+        "--fov",
+        "60",
+        "--light-direction",
+        "-1,0,0",
+        "--light-color",
+        "1,0,0",
+        "--light-intensity",
+        "0.5",
+        "--ambient",
+        "0",
+    ]);
+    assert!(
+        custom.status.success(),
+        "{}",
+        String::from_utf8_lossy(&custom.stderr)
+    );
+    let mut reader = png::Decoder::new(BufReader::new(
+        fs::File::open(workspace.0.join("custom.png")).unwrap(),
+    ))
+    .read_info()
+    .unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    reader.next_frame(&mut pixels).unwrap();
+    let center = (32 * 65 + 32) * 4;
+    assert!(pixels[center] > 0);
+    assert_eq!(&pixels[center + 1..center + 4], &[0, 0, 255]);
 
     let previous_png = fs::read(workspace.0.join("image.png")).unwrap();
     fs::write(

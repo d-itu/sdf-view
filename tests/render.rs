@@ -13,14 +13,17 @@ fn sphere_rendering_and_error_recovery() {
         RenderOptions {
             width: 0,
             height: 32,
+            ..Default::default()
         },
         RenderOptions {
             width: 32,
             height: 0,
+            ..Default::default()
         },
         RenderOptions {
             width: u32::MAX,
             height: 32,
+            ..Default::default()
         },
     ] {
         assert!(matches!(
@@ -39,7 +42,8 @@ fn sphere_rendering_and_error_recovery() {
                 source,
                 RenderOptions {
                     width: 32,
-                    height: 32
+                    height: 32,
+                    ..Default::default()
                 }
             ),
             Err(Error::Gpu(_))
@@ -51,7 +55,11 @@ fn sphere_rendering_and_error_recovery() {
         let image = renderer
             .render(
                 include_str!("../examples/sphere.glsl"),
-                RenderOptions { width, height },
+                RenderOptions {
+                    width,
+                    height,
+                    ..Default::default()
+                },
             )
             .unwrap();
         assert_eq!((image.width(), image.height()), (width, height));
@@ -106,6 +114,7 @@ fn sphere_rendering_and_error_recovery() {
             RenderOptions {
                 width: 17,
                 height: 13,
+                ..Default::default()
             },
         )
         .unwrap();
