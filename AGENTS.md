@@ -151,3 +151,27 @@ repository write permission. Actions are pinned to commit SHAs.
 
 Linux assets use the Ubuntu 24.04 runner's glibc environment, not a static
 portable build. Rendering requires a compatible runtime graphics driver.
+
+### v0.1.0 release notes
+
+Initial release of sdf-view:
+
+- Render a GLSL `float sdf(vec3 p)` function to a transparent RGBA PNG without
+  opening a window, using wgpu.
+- Configure output dimensions, perspective camera position/target/up/FOV,
+  directional light direction/color/intensity, and ambient light through the CLI.
+- Reuse the native Rust renderer library for pixel readback and PNG encoding.
+- Receive input, shader, scene validation, and file output diagnostics with
+  nonzero CLI exit codes.
+- Build optimized Linux and Windows x86-64 release archives with SHA256 checksums
+  through the tagged-release workflow.
+
+Known limitations: a compatible graphics driver is required; only Naga's GLSL
+subset is supported; surface material is fixed; antialiasing, shadows, and
+specular lighting are not implemented. Linux release binaries are built on
+Ubuntu 24.04 and are not statically linked portable binaries.
+
+The release version is `0.1.0` in both `Cargo.toml` and `Cargo.lock`, with tag
+`v0.1.0`. Release preparation is local only until the commit and tag are explicitly
+pushed. A local Nix build is a validation artifact, not a substitute for the
+Ubuntu/Windows assets produced by the release workflow.
