@@ -1,0 +1,157 @@
+name: Release CLI
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Release build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: sdf-view
+            archive: sdf-view-x86_64-unknown-linux-gnu.tar.gz
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: sdf-view.exe
+            archive: sdf-view-x86_64-pc-windows-msvc.zip
+    defaults:
+      run:
+        shell: bash
+    env:
+      # Keep optimization settings scoped to release builds, not local development.
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+      CARGO_PROFILE_RELEASE_LTO: thin
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
+      CARGO_PROFILE_RELEASE_STRIP: symbols
+      CARGO_PROFILE_RELEASE_DEBUG: '0'
+      CARGO_PROFILE_RELEASE_INCREMENTAL: 'false'
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Verify tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
+          expected = f"v{version}"
+          actual = os.environ["RELEASE_TAG"]
+          if actual != expected:
+              raise SystemExit(f"Release tag {actual!r} must match Cargo version {expected!r}")
+          PY
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target "${{ matrix.target }}"
+          rustup override set stable
+          rustc --version
+          cargo --version
+
+      - name: Build optimized CLI
+        run: cargo build --release --locked --bin sdf-view --target "${{ matrix.target }}"
+
+      - name: Test optimized build without a GPU
+        run: |
+          cargo test --release --locked --target "${{ matrix.target }}" --lib
+          cargo test --release --locked --target "${{ matrix.target }}" --test cli help_version_and_invalid_arguments -- --exact
+          cargo test --release --locked --target "${{ matrix.target }}" --test scene validates_scene_without_a_device -- --exact
+
+      - name: Smoke-test CLI
+        run: |
+          "./target/${{ matrix.target }}/release/${{ matrix.binary }}" --help
+          "./target/${{ matrix.target }}/release/${{ matrix.binary }}" --version
+
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        run: tar -czf "${{ matrix.archive }}" -C "target/${{ matrix.target }}/release" "${{ matrix.binary }}"
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.binary }}" -DestinationPath "${{ matrix.archive }}"
+
+      - name: Stage release archive
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: release-${{ matrix.target }}
+          path: ${{ matrix.archive }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download both release archives
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: release-*
+          merge-multiple: true
+          path: dist
+
+      - name: Verify assets and generate checksums
+        working-directory: dist
+        run: |
+          test -s sdf-view-x86_64-unknown-linux-gnu.tar.gz
+          test -s sdf-view-x86_64-pc-windows-msvc.zip
+          sha256sum sdf-view-x86_64-unknown-linux-gnu.tar.gz sdf-view-x86_64-pc-windows-msvc.zip > SHA256SUMS
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          # Resume an interrupted draft, but never overwrite an already published release.
+          if gh release view "$RELEASE_TAG" --json isDraft > release.json; then
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          if not json.loads(Path("release.json").read_text())["isDraft"]:
+              raise SystemExit("Release is already published; refusing to replace its assets")
+          PY
+          else
+            flags=()
+            if [[ "$RELEASE_TAG" == *-* ]]; then
+              flags+=(--prerelease)
+            fi
+            gh release create "$RELEASE_TAG" --verify-tag --draft \
+              --title "$RELEASE_TAG" --generate-notes "${flags[@]}"
+          fi
+          gh release upload "$RELEASE_TAG" \
+            dist/sdf-view-x86_64-unknown-linux-gnu.tar.gz \
+            dist/sdf-view-x86_64-pc-windows-msvc.zip \
+            dist/SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

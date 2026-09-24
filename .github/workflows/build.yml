@@ -1,0 +1,63 @@
+name: Build CLI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-cli-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: sdf-view
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: sdf-view.exe
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target "${{ matrix.target }}"
+          rustup override set stable
+          rustc --version
+          cargo --version
+
+      # Use the default dev profile, matching the project's build convention.
+      - name: Build CLI
+        run: cargo build --locked --bin sdf-view --target "${{ matrix.target }}"
+
+      # Hosted runners are not required to provide a working graphics adapter.
+      - name: Run tests without a GPU
+        run: |
+          cargo test --locked --target "${{ matrix.target }}" --lib
+          cargo test --locked --target "${{ matrix.target }}" --test cli help_version_and_invalid_arguments -- --exact
+          cargo test --locked --target "${{ matrix.target }}" --test scene validates_scene_without_a_device -- --exact
+
+      - name: Smoke-test CLI
+        run: |
+          "./target/${{ matrix.target }}/debug/${{ matrix.binary }}" --help
+          "./target/${{ matrix.target }}/debug/${{ matrix.binary }}" --version
