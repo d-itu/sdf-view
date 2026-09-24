@@ -1,0 +1,412 @@
+//! Headless rendering of GLSL signed distance functions with wgpu.
+//!
+//! The camera is at `(0, 0, 3)`, looks toward the origin with Y up, and has a
+//! 45-degree vertical field of view. Surfaces receive directional lighting;
+//! missed rays produce transparent black pixels. This blocking API targets
+//! native applications and requires a working wgpu graphics adapter.
+
+use std::{borrow::Cow, fs::File, io::BufWriter, io::Write, path::Path};
+
+use futures::{channel::oneshot, executor::block_on};
+
+/// Errors from initialization, rendering, or PNG output.
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    #[error("no compatible graphics adapter: {0}")]
+    Adapter(#[from] wgpu::RequestAdapterError),
+    #[error("could not create graphics device: {0}")]
+    Device(#[from] wgpu::RequestDeviceError),
+    #[error("invalid image dimensions: {0}")]
+    Dimensions(&'static str),
+    #[error("shader or GPU validation failed: {0}")]
+    Gpu(#[from] wgpu::Error),
+    #[error("GPU polling failed: {0}")]
+    Poll(#[from] wgpu::PollError),
+    #[error("GPU readback failed: {0}")]
+    Map(#[from] wgpu::BufferAsyncError),
+    #[error("GPU mapped range failed: {0}")]
+    MapRange(#[from] wgpu::MapRangeError),
+    #[error("GPU readback callback was dropped")]
+    ReadbackDisconnected,
+    #[error("PNG encoding failed: {0}")]
+    Png(#[from] png::EncodingError),
+    #[error("image output failed: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Output dimensions. Both must be nonzero and fit the device limits.
+#[derive(Clone, Copy, Debug)]
+pub struct RenderOptions {
+    pub width: u32,
+    pub height: u32,
+}
+
+impl Default for RenderOptions {
+    fn default() -> Self {
+        Self {
+            width: 512,
+            height: 512,
+        }
+    }
+}
+
+/// An image with tightly packed, top-to-bottom, sRGB RGBA8 pixels.
+#[derive(Debug)]
+pub struct Image {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+impl Image {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+    pub fn pixels(&self) -> &[u8] {
+        &self.pixels
+    }
+
+    /// Encode this image as an RGBA PNG to a writer.
+    pub fn write_png(&self, writer: impl Write) -> Result<(), Error> {
+        let mut encoder = png::Encoder::new(writer, self.width, self.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+        let mut writer = encoder.write_header()?;
+        writer.write_image_data(&self.pixels)?;
+        writer.finish()?;
+        Ok(())
+    }
+
+    /// Create or overwrite a PNG file.
+    pub fn save_png(&self, path: impl AsRef<Path>) -> Result<(), Error> {
+        let mut writer = BufWriter::new(File::create(path)?);
+        self.write_png(&mut writer)?;
+        writer.flush()?;
+        Ok(())
+    }
+}
+
+/// A reusable, headless graphics device for SDF rendering.
+pub struct Renderer {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    adapter_info: wgpu::AdapterInfo,
+}
+
+impl Renderer {
+    /// Select a native graphics adapter and create a device without a window.
+    /// Software adapters are supported when provided by the graphics driver.
+    pub fn new() -> Result<Self, Error> {
+        block_on(async {
+            let instance = wgpu::Instance::new(
+                wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
+            );
+            let adapter = instance
+                .request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                    ..Default::default()
+                })
+                .await?;
+            let adapter_info = adapter.get_info();
+            let (device, queue) = adapter
+                .request_device(&wgpu::DeviceDescriptor {
+                    label: Some("sdf-view"),
+                    ..Default::default()
+                })
+                .await?;
+            Ok(Self {
+                device,
+                queue,
+                adapter_info,
+            })
+        })
+    }
+
+    pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
+        &self.adapter_info
+    }
+
+    /// Render a GLSL snippet defining `float sdf(vec3 p)`.
+    ///
+    /// Helper functions are allowed. Omit `#version`, `main`, and resource
+    /// bindings: the library supplies a GLSL 450 fragment shader around the
+    /// snippet. Naga's GLSL frontend determines the supported GLSL subset.
+    ///
+    /// Sphere tracing uses 256 steps, a 100-unit distance limit, and a 0.001-unit
+    /// hit tolerance. The function must return a signed distance (or a
+    /// conservative distance estimate) for reliable results.
+    /// Compilation and validation errors are returned instead of panicking.
+    pub fn render(&mut self, sdf: &str, options: RenderOptions) -> Result<Image, Error> {
+        let limits = self.device.limits();
+        let layout = ReadbackLayout::new(options, &limits)?;
+        let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
+        let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
+        let result = self.render_inner(sdf, options, layout);
+        let internal_error = block_on(internal.pop());
+        let memory_error = block_on(memory.pop());
+        let validation_error = block_on(validation.pop());
+        if let Some(error) = internal_error.or(memory_error).or(validation_error) {
+            return Err(Error::Gpu(error));
+        }
+        result
+    }
+
+    fn render_inner(
+        &self,
+        sdf: &str,
+        options: RenderOptions,
+        layout: ReadbackLayout,
+    ) -> Result<Image, Error> {
+        let source = format!(
+            "#version 450\nconst vec2 sdf_view_resolution = vec2({}.0, {}.0);\n#line 1 1\n{}\n#line 1 0\n{}",
+            options.width,
+            options.height,
+            sdf,
+            include_str!("shaders/fragment.glsl")
+        );
+        // Resolve shader errors before attempting to build or submit a pipeline.
+        let shader_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let fragment = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("SDF fragment shader"),
+                source: wgpu::ShaderSource::Glsl {
+                    shader: Cow::Owned(source),
+                    stage: wgpu::naga::ShaderStage::Fragment,
+                    defines: &[],
+                },
+            });
+        if let Some(error) = block_on(shader_scope.pop()) {
+            return Err(Error::Gpu(error));
+        }
+        let vertex = self
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("fullscreen triangle"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vertex.wgsl").into()),
+            });
+        let pipeline_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        // An explicit empty layout rejects user-defined resource bindings.
+        let pipeline_layout = self
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("SDF pipeline layout"),
+                bind_group_layouts: &[],
+                immediate_size: 0,
+            });
+        let pipeline = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("SDF pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &vertex,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &fragment,
+                    entry_point: Some("main"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            });
+        if let Some(error) = block_on(pipeline_scope.pop()) {
+            return Err(Error::Gpu(error));
+        }
+        let size = wgpu::Extent3d {
+            width: options.width,
+            height: options.height,
+            depth_or_array_layers: 1,
+        };
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("SDF image"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("SDF readback"),
+            size: layout.buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let view = texture.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("SDF render pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(&pipeline);
+            pass.draw(0..3, 0..1);
+        }
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(layout.padded_row_bytes),
+                    rows_per_image: Some(options.height),
+                },
+            },
+            size,
+        );
+        self.queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        let (sender, receiver) = oneshot::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        // Drive GPU completion and mapping callbacks before waiting on the future.
+        // The futures executor does not poll the wgpu device itself.
+        self.device.poll(wgpu::PollType::wait_indefinitely())?;
+        block_on(receiver).map_err(|_| Error::ReadbackDisconnected)??;
+        let mapped = slice.get_mapped_range()?;
+        let mut pixels = Vec::with_capacity(layout.pixel_bytes);
+        for row in mapped.chunks_exact(layout.padded_row_bytes as usize) {
+            pixels.extend_from_slice(&row[..layout.row_bytes as usize]);
+        }
+        drop(mapped);
+        buffer.unmap();
+        Ok(Image {
+            width: options.width,
+            height: options.height,
+            pixels,
+        })
+    }
+}
+
+struct ReadbackLayout {
+    row_bytes: u32,
+    padded_row_bytes: u32,
+    buffer_size: u64,
+    pixel_bytes: usize,
+}
+
+impl ReadbackLayout {
+    fn new(options: RenderOptions, limits: &wgpu::Limits) -> Result<Self, Error> {
+        let RenderOptions { width, height } = options;
+        if width == 0 || height == 0 {
+            return Err(Error::Dimensions("width and height must be nonzero"));
+        }
+        if width > limits.max_texture_dimension_2d || height > limits.max_texture_dimension_2d {
+            return Err(Error::Dimensions("image exceeds the device texture limit"));
+        }
+        let row_bytes = width
+            .checked_mul(4)
+            .ok_or(Error::Dimensions("row size overflow"))?;
+        let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_row_bytes = row_bytes
+            .checked_add(alignment - 1)
+            .ok_or(Error::Dimensions("padded row size overflow"))?
+            / alignment
+            * alignment;
+        let buffer_size = u64::from(padded_row_bytes) * u64::from(height);
+        if buffer_size > limits.max_buffer_size || usize::try_from(buffer_size).is_err() {
+            return Err(Error::Dimensions(
+                "image exceeds the device readback buffer limit",
+            ));
+        }
+        let pixel_bytes = (u64::from(row_bytes) * u64::from(height)) as usize;
+        Ok(Self {
+            row_bytes,
+            padded_row_bytes,
+            buffer_size,
+            pixel_bytes,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readback_padding() {
+        for (width, padded) in [(1, 256), (64, 256), (65, 512), (129, 768)] {
+            let layout =
+                ReadbackLayout::new(RenderOptions { width, height: 3 }, &wgpu::Limits::default())
+                    .unwrap();
+            assert_eq!(layout.row_bytes, width * 4);
+            assert_eq!(layout.padded_row_bytes, padded);
+            assert_eq!(layout.buffer_size, u64::from(padded) * 3);
+            assert_eq!(layout.pixel_bytes, width as usize * 4 * 3);
+        }
+    }
+
+    #[test]
+    fn invalid_dimensions() {
+        let limits = wgpu::Limits::default();
+        for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1), (1, u32::MAX)] {
+            assert!(matches!(
+                ReadbackLayout::new(RenderOptions { width, height }, &limits),
+                Err(Error::Dimensions(_))
+            ));
+        }
+        let tiny_limits = wgpu::Limits {
+            max_buffer_size: 255,
+            ..limits
+        };
+        assert!(matches!(
+            ReadbackLayout::new(
+                RenderOptions {
+                    width: 1,
+                    height: 1
+                },
+                &tiny_limits
+            ),
+            Err(Error::Dimensions(_))
+        ));
+    }
+
+    #[test]
+    fn png_output_errors_are_returned() {
+        struct BrokenWriter;
+        impl Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("test write failure"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let image = Image {
+            width: 1,
+            height: 1,
+            pixels: vec![0; 4],
+        };
+        assert!(image.write_png(BrokenWriter).is_err());
+    }
+}

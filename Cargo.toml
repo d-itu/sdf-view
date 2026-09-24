@@ -4,3 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+futures = { version = "0.3.34", default-features = false, features = ["executor", "std"] }
+png = "0.18.1"
+thiserror = "2.0.21"
+wgpu = { version = "30.0.1", features = ["glsl"] }
