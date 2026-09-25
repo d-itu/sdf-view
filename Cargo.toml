@@ -1,12 +1,12 @@
-[workspace]
-members = ["cli"]
-default-members = [".", "cli"]
-resolver = "3"
-
 [package]
 name = "sdf-view"
 version = "0.1.0"
 edition = "2024"
+
+[workspace]
+resolver = "3"
+members = ["cli"]
+default-members = [".", "cli"]
 
 [dependencies]
 futures = { version = "0.3.34", default-features = false, features = ["executor", "std"] }
