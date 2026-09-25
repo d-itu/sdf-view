@@ -109,9 +109,12 @@ cargo run -- examples/sphere.glsl -o target/sphere.png
 ```
 
 The explicit `path:.` works with untracked flake files. No rustup installation
-or global toolchain configuration is needed. The shell prepends the pinned
-Vulkan loader to `LD_LIBRARY_PATH`, preserving existing entries, and uses the
-system's graphics drivers. It does not install or configure those drivers.
+or global toolchain configuration is needed. The development environment exports
+`LD_LIBRARY_PATH` with the pinned Vulkan loader directly, so tools importing Nix
+environment variables do not need to execute a `shellHook` to make rendering work.
+After changing the flake, re-enter `nix develop path:.` or let direnv reload before
+running `cargo run`. The loader uses the system's graphics drivers; the flake does
+not install or configure those drivers.
 Software Vulkan adapters such as Mesa lavapipe work when provided by the system.
 `WGPU_BACKEND=vulkan` can restrict backend selection for diagnosis.
 
