@@ -59,6 +59,9 @@ jobs:
           from pathlib import Path
 
           version = tomllib.loads(Path("Cargo.toml").read_text())["package"]["version"]
+          cli_version = tomllib.loads(Path("cli/Cargo.toml").read_text())["package"]["version"]
+          if cli_version != version:
+              raise SystemExit("Library and CLI package versions must match")
           expected = f"v{version}"
           actual = os.environ["RELEASE_TAG"]
           if actual != expected:

@@ -14,10 +14,13 @@ and release notes in this file.
 
 ## Implementation and library API
 
-- `src/lib.rs`: synchronous, native, headless `Renderer`, GPU readback, and PNG output.
+- `src/lib.rs`: synchronous, native, headless `Renderer` and mapped GPU readback.
+- `cli/`: separate `sdf-view-cli` workspace package providing the `sdf-view` binary.
+  Only this package depends on PNG and clap; the library has no encoding dependencies.
 - `src/scene.rs`: camera and directional light configuration and validation.
 - `src/shaders/`: fullscreen triangle and fragment-shader sphere tracing.
-- `src/main.rs`: clap arguments, scene validation, file handling, and diagnostics.
+- `cli/src/main.rs`: clap arguments, scene validation, PNG encoding, file handling,
+  and diagnostics. CLI integration tests live in `cli/tests/cli.rs`.
 - `examples/sphere.rs`: library example; `examples/sphere.glsl`: unit sphere input.
 
 ```rust
@@ -40,16 +43,24 @@ fn main() -> Result<(), sdf_view::Error> {
         },
     };
     let image = renderer.render("float sdf(vec3 p) { return length(p) - 1.0; }", options)?;
-    image.save_png("sphere.png")?;
+    println!("Rendered {}x{} pixels", image.width(), image.height());
     Ok(())
 }
 ```
 
-Reuse `Renderer` across calls to retain the graphics device. `Image::width()`,
-`height()`, and `pixels()` expose tightly packed, top-to-bottom sRGB RGBA8 data.
-`write_png` accepts a writer; `save_png` writes a file. GPU readback removes
-256-byte row padding. `futures::executor::block_on` and a oneshot channel bridge
-GPU mapping callbacks; explicit device polling is still required.
+Reuse `Renderer` across calls to retain the graphics device. `Image` owns a mapped
+wgpu buffer view and remains valid after the renderer is dropped. `width()` and
+`height()` expose its dimensions. `rows()` borrows top-to-bottom sRGB RGBA8 rows
+without alignment padding or CPU copies. `pixels()` preserves the tightly packed
+slice API: aligned images borrow mapped memory directly; padded images allocate
+and cache a packed copy on first access. Holding images retains their readback
+buffers, so drop them when no longer needed.
+
+PNG encoding and output errors belong to the CLI. It streams `rows()` into the
+encoder without allocating a packed image. The former library `write_png()` and
+`save_png()` methods and `Error::Png`/`Error::Io` variants are removed.
+`futures::executor::block_on` and a oneshot channel bridge GPU mapping callbacks;
+explicit device polling is still required.
 
 The library wraps user GLSL in a GLSL 450 fragment shader compiled by Naga.
 Helper functions are supported, but user snippets must omit `#version`, `main`,
@@ -81,6 +92,10 @@ these before initializing the GPU and exits with code 2.
 
 ## Development
 
+The workspace defaults to both library and CLI packages. Use
+`cargo build -p sdf-view` to build only the library, without PNG or clap. Keep versions in
+`Cargo.toml`, `cli/Cargo.toml`, and `Cargo.lock` synchronized for releases.
+
 The Nix flake supports `x86_64-linux` and `aarch64-linux` and provides Rust,
 Cargo, rustfmt, Clippy, rust-analyzer, standard library sources, and the Vulkan
 loader. Versions are pinned by `flake.lock` and `Cargo.lock`.
@@ -92,7 +107,8 @@ cargo test
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
-cargo run --example sphere -- target/sphere.png
+cargo run --example sphere
+cargo run -- examples/sphere.glsl -o target/sphere.png
 ```
 
 The explicit `path:.` works with untracked flake files. No rustup installation
@@ -129,7 +145,8 @@ Normal CI does not package or upload binaries. It runs GPU-independent tests
 and CLI help/version smoke tests, without configuring a graphics adapter.
 
 `.github/workflows/release.yml` runs on pushed `v*` tags. Tags must exactly match
-`v` plus the version in `Cargo.toml`, for example `v0.1.0`. Commit version and
+`v` plus the version in `Cargo.toml`, for example `v0.1.0`. The CLI package version
+must match the library version. Commit version and
 lockfile changes before pushing a matching tag.
 
 Release builds use `cargo build --release --locked` with workflow-scoped
@@ -160,7 +177,8 @@ Initial release of sdf-view:
   opening a window, using wgpu.
 - Configure output dimensions, perspective camera position/target/up/FOV,
   directional light direction/color/intensity, and ambient light through the CLI.
-- Reuse the native Rust renderer library for pixel readback and PNG encoding.
+- Reuse the native Rust renderer library for mapped pixel readback; encode PNGs
+  in the separate CLI package.
 - Receive input, shader, scene validation, and file output diagnostics with
   nonzero CLI exit codes.
 - Build optimized Linux and Windows x86-64 release archives with SHA256 checksums
@@ -171,7 +189,8 @@ subset is supported; surface material is fixed; antialiasing, shadows, and
 specular lighting are not implemented. Linux release binaries are built on
 Ubuntu 24.04 and are not statically linked portable binaries.
 
-The release version is `0.1.0` in both `Cargo.toml` and `Cargo.lock`, with tag
-`v0.1.0`. Release preparation is local only until the commit and tag are explicitly
+The package version is `0.1.0` in `Cargo.toml`, `cli/Cargo.toml`, and `Cargo.lock`.
+The existing local `v0.1.0` tag predates the workspace split and remains unchanged.
+Release preparation is local only until the commit and tag are explicitly
 pushed. A local Nix build is a validation artifact, not a substitute for the
 Ubuntu/Windows assets produced by the release workflow.

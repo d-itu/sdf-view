@@ -1,13 +1,11 @@
 use sdf_view::{RenderOptions, Renderer};
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let output = std::env::args_os()
-        .nth(1)
-        .unwrap_or_else(|| "sphere.png".into());
+fn main() -> Result<(), sdf_view::Error> {
     let mut renderer = Renderer::new()?;
-    eprintln!("Adapter: {:?}", renderer.adapter_info());
     let image = renderer.render(include_str!("sphere.glsl"), RenderOptions::default())?;
-    image.save_png(&output)?;
-    eprintln!("Saved {}", std::path::Path::new(&output).display());
+    println!("Rendered {}x{} RGBA8 pixels", image.width(), image.height());
+    for row in image.rows() {
+        assert_eq!(row.len(), image.width() as usize * 4);
+    }
     Ok(())
 }

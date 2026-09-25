@@ -1,7 +1,12 @@
-use std::{fs, path::PathBuf, process::ExitCode};
+use std::{
+    fs,
+    io::{BufWriter, Write},
+    path::{Path, PathBuf},
+    process::ExitCode,
+};
 
 use clap::Parser;
-use sdf_view::{Camera, DirectionalLight, RenderOptions, Renderer};
+use sdf_view::{Camera, DirectionalLight, Image, RenderOptions, Renderer};
 
 /// Render a GLSL signed distance function to a PNG image.
 #[derive(Debug, Parser)]
@@ -107,8 +112,7 @@ fn run(args: Args) -> Result<(), String> {
     let image = renderer
         .render(&source, args.render_options())
         .map_err(|error| format!("could not render '{}': {error}", args.input.display()))?;
-    image
-        .save_png(&args.output)
+    save_png(&image, &args.output)
         .map_err(|error| format!("could not write '{}': {error}", args.output.display()))?;
     eprintln!(
         "Saved {} ({}x{})",
@@ -116,6 +120,29 @@ fn run(args: Args) -> Result<(), String> {
         image.width(),
         image.height()
     );
+    Ok(())
+}
+
+fn write_png(image: &Image, output: impl Write) -> Result<(), png::EncodingError> {
+    let mut encoder = png::Encoder::new(output, image.width(), image.height());
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
+    let mut writer = encoder.write_header()?;
+    {
+        let mut stream = writer.stream_writer()?;
+        for row in image.rows() {
+            stream.write_all(row)?;
+        }
+        stream.finish()?;
+    }
+    writer.finish()
+}
+
+fn save_png(image: &Image, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let mut output = BufWriter::new(fs::File::create(path)?);
+    write_png(image, &mut output)?;
+    output.flush()?;
     Ok(())
 }
 
@@ -131,5 +158,35 @@ fn main() -> ExitCode {
             eprintln!("error: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn png_output_errors_are_returned() {
+        struct BrokenWriter;
+        impl Write for BrokenWriter {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::other("test write failure"))
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut renderer = Renderer::new().expect("a working graphics adapter is required");
+        let image = renderer
+            .render(
+                "float sdf(vec3 p) { return length(p) - 1.0; }",
+                RenderOptions {
+                    width: 1,
+                    height: 1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(write_png(&image, BrokenWriter).is_err());
     }
 }

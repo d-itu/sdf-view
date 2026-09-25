@@ -6,7 +6,7 @@
 //! missed rays produce transparent black pixels. This blocking API targets
 //! native applications and requires a working wgpu graphics adapter.
 
-use std::{borrow::Cow, fs::File, io::BufWriter, io::Write, path::Path};
+use std::{borrow::Cow, sync::OnceLock};
 
 use futures::{channel::oneshot, executor::block_on};
 
@@ -14,7 +14,7 @@ mod scene;
 use scene::glsl_vec3;
 pub use scene::{Camera, DirectionalLight};
 
-/// Errors from initialization, rendering, or PNG output.
+/// Errors from initialization or rendering.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("no compatible graphics adapter: {0}")]
@@ -35,10 +35,6 @@ pub enum Error {
     MapRange(#[from] wgpu::MapRangeError),
     #[error("GPU readback callback was dropped")]
     ReadbackDisconnected,
-    #[error("PNG encoding failed: {0}")]
-    Png(#[from] png::EncodingError),
-    #[error("image output failed: {0}")]
-    Io(#[from] std::io::Error),
 }
 
 /// Image dimensions, camera, and lighting for a render.
@@ -74,12 +70,16 @@ impl RenderOptions {
     }
 }
 
-/// An image with tightly packed, top-to-bottom, sRGB RGBA8 pixels.
+/// An image backed by mapped GPU readback memory, in top-to-bottom sRGB RGBA8.
+/// The image remains valid after its renderer is dropped.
 #[derive(Debug)]
 pub struct Image {
     width: u32,
     height: u32,
-    pixels: Vec<u8>,
+    mapped: wgpu::BufferView,
+    row_bytes: usize,
+    row_stride: usize,
+    packed: OnceLock<Vec<u8>>,
 }
 
 impl Image {
@@ -89,28 +89,26 @@ impl Image {
     pub fn height(&self) -> u32 {
         self.height
     }
+    /// Borrow tightly packed pixels. Aligned images need no CPU copy; images
+    /// with row padding are packed once on demand and cached.
     pub fn pixels(&self) -> &[u8] {
-        &self.pixels
+        if self.row_bytes == self.row_stride {
+            return &self.mapped;
+        }
+        self.packed.get_or_init(|| {
+            let mut pixels = Vec::with_capacity(self.row_bytes * self.height as usize);
+            for row in self.rows() {
+                pixels.extend_from_slice(row);
+            }
+            pixels
+        })
     }
 
-    /// Encode this image as an RGBA PNG to a writer.
-    pub fn write_png(&self, writer: impl Write) -> Result<(), Error> {
-        let mut encoder = png::Encoder::new(writer, self.width, self.height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
-        let mut writer = encoder.write_header()?;
-        writer.write_image_data(&self.pixels)?;
-        writer.finish()?;
-        Ok(())
-    }
-
-    /// Create or overwrite a PNG file.
-    pub fn save_png(&self, path: impl AsRef<Path>) -> Result<(), Error> {
-        let mut writer = BufWriter::new(File::create(path)?);
-        self.write_png(&mut writer)?;
-        writer.flush()?;
-        Ok(())
+    /// Borrow pixel rows without alignment padding or CPU copies.
+    pub fn rows(&self) -> impl ExactSizeIterator<Item = &[u8]> {
+        self.mapped
+            .chunks_exact(self.row_stride)
+            .map(|row| &row[..self.row_bytes])
     }
 }
 
@@ -341,16 +339,13 @@ impl Renderer {
         self.device.poll(wgpu::PollType::wait_indefinitely())?;
         block_on(receiver).map_err(|_| Error::ReadbackDisconnected)??;
         let mapped = slice.get_mapped_range()?;
-        let mut pixels = Vec::with_capacity(layout.pixel_bytes);
-        for row in mapped.chunks_exact(layout.padded_row_bytes as usize) {
-            pixels.extend_from_slice(&row[..layout.row_bytes as usize]);
-        }
-        drop(mapped);
-        buffer.unmap();
         Ok(Image {
             width: options.width,
             height: options.height,
-            pixels,
+            mapped,
+            row_bytes: layout.row_bytes as usize,
+            row_stride: layout.padded_row_bytes as usize,
+            packed: OnceLock::new(),
         })
     }
 }
@@ -359,7 +354,6 @@ struct ReadbackLayout {
     row_bytes: u32,
     padded_row_bytes: u32,
     buffer_size: u64,
-    pixel_bytes: usize,
 }
 
 impl ReadbackLayout {
@@ -386,12 +380,10 @@ impl ReadbackLayout {
                 "image exceeds the device readback buffer limit",
             ));
         }
-        let pixel_bytes = (u64::from(row_bytes) * u64::from(height)) as usize;
         Ok(Self {
             row_bytes,
             padded_row_bytes,
             buffer_size,
-            pixel_bytes,
         })
     }
 }
@@ -415,7 +407,6 @@ mod tests {
             assert_eq!(layout.row_bytes, width * 4);
             assert_eq!(layout.padded_row_bytes, padded);
             assert_eq!(layout.buffer_size, u64::from(padded) * 3);
-            assert_eq!(layout.pixel_bytes, width as usize * 4 * 3);
         }
     }
 
@@ -450,24 +441,5 @@ mod tests {
             ),
             Err(Error::Dimensions(_))
         ));
-    }
-
-    #[test]
-    fn png_output_errors_are_returned() {
-        struct BrokenWriter;
-        impl Write for BrokenWriter {
-            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
-                Err(std::io::Error::other("test write failure"))
-            }
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let image = Image {
-            width: 1,
-            height: 1,
-            pixels: vec![0; 4],
-        };
-        assert!(image.write_png(BrokenWriter).is_err());
     }
 }

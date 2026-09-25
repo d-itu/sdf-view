@@ -1,5 +1,3 @@
-use std::io::Cursor;
-
 use sdf_view::{Error, RenderOptions, Renderer};
 
 // This is an actual graphics integration test. A missing adapter is a failure,
@@ -97,15 +95,19 @@ fn sphere_rendering_and_error_recovery() {
                 "the top should face the light"
             );
         }
-        let mut encoded = Vec::new();
-        image.write_png(&mut encoded).unwrap();
-        let mut decoder = png::Decoder::new(Cursor::new(encoded)).read_info().unwrap();
-        let mut decoded = vec![0; decoder.output_buffer_size().unwrap()];
-        let frame = decoder.next_frame(&mut decoded).unwrap();
-        assert_eq!((frame.width, frame.height), (width, height));
-        assert_eq!(frame.color_type, png::ColorType::Rgba);
-        assert_eq!(frame.bit_depth, png::BitDepth::Eight);
-        assert_eq!(&decoded[..frame.buffer_size()], image.pixels());
+        assert_eq!(image.rows().len(), height as usize);
+        for (row, packed) in image
+            .rows()
+            .zip(image.pixels().chunks_exact(width as usize * 4))
+        {
+            assert_eq!(row, packed);
+        }
+        if width % 64 == 0 {
+            assert_eq!(
+                image.rows().next().unwrap().as_ptr(),
+                image.pixels().as_ptr()
+            );
+        }
     }
 
     let empty = renderer
@@ -118,5 +120,6 @@ fn sphere_rendering_and_error_recovery() {
             },
         )
         .unwrap();
+    drop(renderer);
     assert!(empty.pixels().iter().all(|&value| value == 0));
 }

@@ -69,7 +69,7 @@ struct Workspace(PathBuf);
 impl Workspace {
     fn new() -> Self {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
+            .join("../target")
             .join(format!("cli-test-{}", std::process::id()));
         fs::create_dir_all(&path).unwrap();
         Self(path)
@@ -93,7 +93,8 @@ impl Drop for Workspace {
 #[test]
 fn renders_png_and_reports_runtime_errors() {
     let workspace = Workspace::new();
-    let source = include_str!("../examples/sphere.glsl");
+    let source = include_str!("../../examples/sphere.glsl");
+    let mut renderer = sdf_view::Renderer::new().unwrap();
     fs::write(workspace.0.join("sphere.glsl"), source).unwrap();
 
     let missing = workspace.run(&["missing.glsl", "-o", "image.png"]);
@@ -130,6 +131,22 @@ fn renders_png_and_reports_runtime_errors() {
         let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
         let frame = reader.next_frame(&mut pixels).unwrap();
         assert_eq!(frame.color_type, png::ColorType::Rgba);
+        assert_eq!(frame.bit_depth, png::BitDepth::Eight);
+        assert_eq!(
+            reader.info().srgb,
+            Some(png::SrgbRenderingIntent::Perceptual)
+        );
+        let image = renderer
+            .render(
+                source,
+                sdf_view::RenderOptions {
+                    width: expected.0,
+                    height: expected.1,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(&pixels[..frame.buffer_size()], image.pixels());
         assert_eq!(pixels[3], 0);
         let center = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
         assert_eq!(pixels[center + 3], 255);
