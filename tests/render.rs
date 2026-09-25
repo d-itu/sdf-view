@@ -49,6 +49,11 @@ fn sphere_rendering_and_error_recovery() {
             height: 32,
             ..Default::default()
         },
+        RenderOptions {
+            width: 32,
+            height: u32::MAX,
+            ..Default::default()
+        },
     ] {
         std::assert_matches!(
             renderer.render(include_str!("../examples/sphere.glsl"), options),

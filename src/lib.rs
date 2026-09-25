@@ -145,6 +145,7 @@ impl Renderer {
         fn vec3(v: [f32; 3]) -> impl fmt::Display {
             fmt::from_fn(move |f| write!(f, "vec3({:?}, {:?}, {:?})", v[0], v[1], v[2]))
         }
+        let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
         let basis = options.camera.basis()?;
         let light_direction = options.light.normalized_direction()?;
         let source = format!(
@@ -250,7 +251,6 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SDF readback"),
             size: layout.buffer_size,
