@@ -61,7 +61,7 @@ impl ScenePipeline {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(128),
+                    min_binding_size: wgpu::BufferSize::new(144),
                 },
                 count: None,
             }],
@@ -117,7 +117,7 @@ impl ScenePipeline {
 
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SDF scene parameters"),
-            size: 128,
+            size: 144,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -199,8 +199,14 @@ impl ScenePipeline {
                 color[2],
                 if premultiplied { 1.0 } else { 0.0 },
             ],
+            [
+                options.object_color[0],
+                options.object_color[1],
+                options.object_color[2],
+                0.0,
+            ],
         ];
-        let mut bytes = [0u8; 128];
+        let mut bytes = [0u8; 144];
         for (dst, value) in bytes
             .as_chunks_mut::<4>()
             .0

@@ -115,6 +115,27 @@ fn sphere_rendering_and_error_recovery() {
     )
     .unwrap();
 
+    for object_color in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0; 3]] {
+        let pixels = renderer
+            .render_with_pipeline(
+                &pipeline,
+                RenderOptions {
+                    width: 1,
+                    height: 1,
+                    object_color,
+                    light: sdf_view::DirectionalLight {
+                        intensity: 0.0,
+                        ambient: 1.0,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert_eq!(&pixels[..3], &object_color.map(|v| (v * 255.0) as u8));
+        assert_eq!(pixels[3], 255);
+    }
+
     for options in [
         RenderOptions {
             width: 0,

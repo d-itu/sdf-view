@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Unify CLI colors as sRGB `rgb(r,g,b)` integers in 0..=255, with `black`
+  and `white` aliases. `--background` also retains `transparent` and `checkerboard`.
+  `--light-color` no longer accepts linear float triples: migrate `1,0.9,0.8`
+  to approximately `rgb(255,243,231)` after sRGB encoding.
+- Add `--object-color` (default `rgb(137,196,237)`) and linear RGB
+  `RenderOptions::object_color`. Use `..Default::default()` for existing struct
+  literals. The default blue is rounded to sRGB bytes, slightly changing its
+  previous linear `[0.25,0.55,0.85]` value. Colors apply to PNGs, previews, and
+  screenshots, and pipeline updates upload albedo without recompiling shaders.
+
+
 - Add a default-enabled `gpu-test` feature to the library and CLI. Disabling it
   excludes GPU-dependent tests while preserving all rendering functionality.
   Build and release CI now run workspace tests without per-test name filters;

@@ -70,6 +70,8 @@ pub struct RenderOptions {
     pub light: DirectionalLight,
     pub antialiasing: Antialiasing,
     pub background: Background,
+    /// Linear RGB surface albedo, with finite components in [0, 1].
+    pub object_color: [f32; 3],
 }
 
 impl Default for RenderOptions {
@@ -81,6 +83,8 @@ impl Default for RenderOptions {
             light: DirectionalLight::default(),
             antialiasing: Antialiasing::default(),
             background: Background::default(),
+            object_color: [137u8, 196, 237]
+                .map(|value| ((f32::from(value) / 255.0 + 0.055) / 1.055).powf(2.4)),
         }
     }
 }
@@ -91,6 +95,15 @@ impl RenderOptions {
     pub fn validate(&self) -> Result<(), Error> {
         if self.width == 0 || self.height == 0 {
             return Err(Error::Dimensions("width and height must be nonzero"));
+        }
+        if !self
+            .object_color
+            .iter()
+            .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
+        {
+            return Err(SettingsError(
+                "object color components must be finite and between 0 and 1",
+            ));
         }
         self.camera.basis()?;
         self.light.normalized_direction()?;
@@ -300,6 +313,17 @@ impl ReadbackLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_object_color() {
+        for component in [-1.0, 1.1, f32::NAN, f32::INFINITY] {
+            let options = RenderOptions {
+                object_color: [component, 0.0, 0.0],
+                ..Default::default()
+            };
+            std::assert_matches!(options.validate(), Err(SettingsError(_)));
+        }
+    }
 
     #[test]
     fn readback_padding() {

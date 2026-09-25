@@ -27,7 +27,7 @@ vec4 sdf_view_trace(vec2 pixel) {
         if (abs(distance) < 0.001) {
             vec3 normal = sdf_view_normal(p);
             float diffuse = max(dot(normal, sdf_view_light_direction), 0.0);
-            vec3 albedo = vec3(0.25, 0.55, 0.85);
+            vec3 albedo = sdf_view_scene.object_color.rgb;
             vec3 illumination = vec3(sdf_view_ambient) +
                 sdf_view_light_color * sdf_view_light_intensity * diffuse;
             return vec4(albedo * illumination, 1.0);

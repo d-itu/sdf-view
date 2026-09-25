@@ -74,7 +74,13 @@ and resource bindings. Reserve the `sdf_view_` prefix. Naga does not implement a
 GLSL features. Shader and pipeline validation failures return `Error::Gpu`.
 
 `RenderOptions` includes `width`, `height`, `camera`, `light`, `antialiasing`, and
-`background`. `Background` defaults to `Transparent` and also supports `Checkerboard`
+`background`, and `object_color`. Object color is a finite linear RGB albedo in
+`[0, 1]`, defaulting to the linear decoding of sRGB `[137, 196, 237]`.
+The CLI uses one color parser for background, light, and object colors:
+`rgb(r,g,b)` in 0..=255, `black`, or `white`. It decodes light and object colors
+from sRGB before constructing scene options. The scene uniform is 144 bytes,
+including a final vec4 for object color; pipeline updates do not recompile shaders.
+`Background` defaults to `Transparent` and also supports `Checkerboard`
 and `Rgb([u8; 3])` with sRGB components. Use
 `..Default::default()` when overriding only some fields. `validate()` checks
 scene settings without a GPU; `render()` delegates device-specific resource limits to

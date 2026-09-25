@@ -272,7 +272,7 @@ fn renders_png_and_reports_runtime_errors() {
         "--light-direction",
         "-1,0,0",
         "--light-color",
-        "1,0,0",
+        "rgb(255,0,0)",
         "--light-intensity",
         "0.5",
         "--ambient",
@@ -293,6 +293,47 @@ fn renders_png_and_reports_runtime_errors() {
     let center = (32 * 65 + 32) * 4;
     assert!(pixels[center] > 0);
     assert_eq!(&pixels[center + 1..center + 4], &[0, 0, 255]);
+
+    for (flag, other, intensity, ambient) in [
+        ("--object-color", "--light-color", "0", "1"),
+        ("--light-color", "--object-color", "1", "0"),
+    ] {
+        let result = workspace.run(&[
+            "sphere.glsl",
+            "-o",
+            "color.png",
+            "--width",
+            "1",
+            "--height",
+            "1",
+            flag,
+            "rgb(12,128,255)",
+            other,
+            "white",
+            "--light-direction",
+            "0,0,1",
+            "--light-intensity",
+            intensity,
+            "--ambient",
+            ambient,
+        ]);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let mut reader = png::Decoder::new(BufReader::new(
+            fs::File::open(workspace.0.join("color.png")).unwrap(),
+        ))
+        .read_info()
+        .unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        reader.next_frame(&mut pixels).unwrap();
+        for (actual, expected) in pixels[..3].iter().zip([12u8, 128, 255]) {
+            assert!(actual.abs_diff(expected) <= 1, "{flag}: {pixels:?}");
+        }
+        assert_eq!(pixels[3], 255);
+    }
 
     let previous_png = fs::read(workspace.0.join("image.png")).unwrap();
     fs::write(

@@ -30,7 +30,7 @@ struct Args {
     #[arg(short, long)]
     interactive: bool,
 
-    /// Background: transparent, checkerboard, or rgb(0-255,0-255,0-255)
+    /// Background: transparent, checkerboard, rgb(r,g,b) in 0-255, black, or white
     #[arg(long, default_value = "transparent", value_parser = parse_background)]
     background: Background,
 
@@ -66,9 +66,13 @@ struct Args {
     #[arg(long, default_value = "-0.5,0.8,1", value_parser = parse_vec3, value_name = "X,Y,Z", allow_hyphen_values = true)]
     light_direction: [f32; 3],
 
-    /// Linear RGB light color, each component between 0 and 1
-    #[arg(long, default_value = "1,1,1", value_parser = parse_vec3, value_name = "R,G,B", allow_hyphen_values = true)]
-    light_color: [f32; 3],
+    /// sRGB object color: rgb(r,g,b), black, or white
+    #[arg(long, default_value = "rgb(137,196,237)", value_parser = parse_color)]
+    object_color: [u8; 3],
+
+    /// sRGB light color: rgb(r,g,b), black, or white
+    #[arg(long, default_value = "white", value_parser = parse_color)]
+    light_color: [u8; 3],
 
     /// Nonnegative directional light strength
     #[arg(long, default_value_t = 0.85, allow_negative_numbers = true)]
@@ -80,36 +84,63 @@ struct Args {
 }
 
 #[derive(Debug, thiserror::Error, Clone, Copy)]
-#[error("expected transparent, checkerboard, or rgb(r,g,b) with integer components in 0..=255")]
+#[error(
+    "expected transparent, checkerboard, black, white, or rgb(r,g,b) with integer components in 0..=255"
+)]
 struct InvalidBackground;
 
 fn parse_background(value: &str) -> Result<Background, InvalidBackground> {
     match value {
         "transparent" => Ok(Background::Transparent),
         "checkerboard" => Ok(Background::Checkerboard),
-        "black" => Ok(Background::Rgb([0, 0, 0])),
-        "white" => Ok(Background::Rgb([255, 255, 255])),
+        _ => parse_color(value)
+            .map(Background::Rgb)
+            .map_err(|_| InvalidBackground),
+    }
+}
+
+#[derive(Debug, thiserror::Error, Clone, Copy)]
+#[error(
+    "expected transparent, checkerboard, black, white, or rgb(r,g,b) with integer components in 0..=255"
+)]
+struct InvalidColor;
+
+fn parse_color(value: &str) -> Result<[u8; 3], InvalidColor> {
+    match value {
+        "black" => Ok([0; 3]),
+        "white" => Ok([255; 3]),
         _ => {
             let body = value
                 .strip_prefix("rgb(")
                 .and_then(|v| v.strip_suffix(')'))
-                .ok_or(InvalidBackground)?;
+                .ok_or(InvalidColor)?;
             let mut parts = body.split(',');
             let mut color = [0; 3];
             for component in &mut color {
                 *component = parts
                     .next()
-                    .ok_or(InvalidBackground)?
+                    .ok_or(InvalidColor)?
                     .trim()
-                    .parse::<u8>()
-                    .map_err(|_| InvalidBackground)?;
+                    .parse()
+                    .map_err(|_| InvalidColor)?;
             }
             if parts.next().is_some() {
-                return Err(InvalidBackground);
+                return Err(InvalidColor);
             }
-            Ok(Background::Rgb(color))
+            Ok(color)
         }
     }
+}
+
+fn linear_color(color: [u8; 3]) -> [f32; 3] {
+    color.map(|value| {
+        let srgb = f32::from(value) / 255.0;
+        if srgb <= 0.04045 {
+            srgb / 12.92
+        } else {
+            ((srgb + 0.055) / 1.055).powf(2.4)
+        }
+    })
 }
 
 fn parse_antialiasing(value: &str) -> Result<Antialiasing, &'static str> {
@@ -154,11 +185,12 @@ impl Args {
             },
             light: DirectionalLight {
                 direction: self.light_direction,
-                color: self.light_color,
+                color: linear_color(self.light_color),
                 intensity: self.light_intensity,
                 ambient: self.ambient,
             },
             background: self.background,
+            object_color: linear_color(self.object_color),
         }
     }
 }
@@ -261,6 +293,44 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn color_arguments_share_srgb_format() {
+        use super::*;
+        for flag in ["--background", "--light-color", "--object-color"] {
+            for value in ["black", "white", "rgb(12, 128,255)"] {
+                let args =
+                    Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png", flag, value])
+                        .unwrap();
+                let color = parse_color(value).unwrap();
+                let options = args.render_options();
+                match flag {
+                    "--background" => assert_eq!(options.background, Background::Rgb(color)),
+                    "--light-color" => assert_eq!(options.light.color, linear_color(color)),
+                    _ => assert_eq!(options.object_color, linear_color(color)),
+                }
+            }
+            for value in [
+                "rgb(256,0,0)",
+                "rgb(-1,0,0)",
+                "rgb(1.5,0,0)",
+                "rgb(1,2)",
+                "rgb(1,2,3,4)",
+                "1,0,0",
+            ] {
+                assert!(
+                    Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png", flag, value])
+                        .is_err()
+                );
+            }
+        }
+        assert!((linear_color([128; 3])[0] - 0.21586).abs() < 0.00001);
+        let args = Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png"]).unwrap();
+        assert_eq!(
+            args.render_options().object_color,
+            RenderOptions::default().object_color
+        );
+    }
+
     use super::*;
 
     #[test]

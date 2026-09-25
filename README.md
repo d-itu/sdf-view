@@ -58,6 +58,10 @@ are physical pixels; resizing the window updates the image dimensions. Transpare
 areas remain transparent by default. `--background` accepts `transparent`,
 `checkerboard`, or `rgb(r,g,b)` with integer sRGB components from 0 to 255.
 The selected background applies equally to the window, screenshots, and offline PNGs.
+All color arguments (`--background`, `--light-color`, and `--object-color`) accept
+`rgb(r,g,b)` with sRGB integer components in 0–255, or `black` and `white`.
+Quote `rgb(...)` values in the shell. Lighting is computed in linear space.
+For example, use `--object-color 'rgb(255,96,32)'` for an orange surface.
 Transparent windows require desktop compositor support; without it, transparent
 pixels may appear opaque on screen while PNG transparency remains intact.
 
@@ -96,7 +100,8 @@ input while idle.
 | `--camera-up X,Y,Z` | Camera up direction | `0,1,0` |
 | `--fov <DEGREES>` | Vertical field of view | `45` |
 | `--light-direction X,Y,Z` | Direction from the surface toward the light | `-0.5,0.8,1` |
-| `--light-color R,G,B` | Linear RGB light color | `1,1,1` |
+| `--light-color <COLOR>` | sRGB light color | `white` |
+| `--object-color <COLOR>` | sRGB object color | `rgb(137,196,237)` |
 | `--light-intensity <VALUE>` | Directional light strength | `0.85` |
 | `--ambient <VALUE>` | White ambient light strength | `0.15` |
 
@@ -114,7 +119,7 @@ and light strengths nonnegative.
 ```sh
 sdf-view sphere.glsl -o sphere.png \
   --camera-position 3,2,4 --camera-target 0,0,0 --fov 50 \
-  --light-direction -1,2,3 --light-color 1,0.9,0.8 \
+  --light-direction -1,2,3 --light-color 'rgb(255,243,231)' \
   --light-intensity 0.85 --ambient 0.15
 ```
 
