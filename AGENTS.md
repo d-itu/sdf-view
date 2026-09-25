@@ -195,6 +195,11 @@ Software Vulkan adapters such as Mesa lavapipe work when provided by the system.
 
 ### Tests
 
+The library and CLI both enable `gpu-test` by default. The CLI forwards this
+feature to the library and disables the library dependency's implicit default
+features, so workspace `--no-default-features` reliably excludes GPU tests.
+The feature only controls tests, not rendering code or GPU dependencies.
+
 Full `cargo test` requires a working graphics adapter and fails rather than
 silently skipping rendering tests. Tests cover sphere silhouettes, aspect ratio,
 readback padding, image orientation, PNG round trips, shader error recovery,
@@ -204,15 +209,24 @@ uniform changes, failed reload recovery, and opaque preview composition. Window
 input/resize/screenshot behavior requires a desktop or an isolated X11 server for
 end-to-end verification; normal CI does not open windows.
 
-GPU-independent checks:
+GPU-independent checks use the same commands locally and in CI:
 
 ```sh
-cargo test --locked --lib
-cargo test --locked --test cli help_version_and_invalid_arguments -- --exact
-cargo test --locked -p sdf-view-cli --bin sdf-view interactive::
-cargo test --locked -p sdf-view-cli --bin sdf-view tests::interactive_arguments -- --exact
-cargo test --locked --test scene validates_scene_without_a_device -- --exact
+cargo test --workspace --locked --no-default-features --features sdf-view-cli/interactive
+cargo test --workspace --locked --no-default-features
 ```
+
+To run all offline CLI tests, including GPU rendering, without window support:
+
+```sh
+cargo test --locked -p sdf-view-cli --no-default-features --features gpu-test
+```
+
+New CPU tests are discovered automatically. Gate GPU test functions and helpers
+with `#[cfg(feature = "gpu-test")]`, or use `#![cfg(feature = "gpu-test")]` for
+an entire GPU-only test file. Keep CPU validation tests available without the
+feature. Build and release CI do not filter by test names; release tests use
+the interactive GPU-independent command with `--release`.
 
 ## CI and releases
 

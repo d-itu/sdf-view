@@ -1,4 +1,6 @@
-use sdf_view::{Camera, DirectionalLight, Error, RenderOptions, Renderer};
+#[cfg(feature = "gpu-test")]
+use sdf_view::Renderer;
+use sdf_view::{Camera, DirectionalLight, Error, RenderOptions};
 
 #[test]
 fn validates_scene_without_a_device() {
@@ -71,6 +73,7 @@ fn validates_scene_without_a_device() {
     }
 }
 
+#[cfg(feature = "gpu-test")]
 fn render(renderer: &mut Renderer, sdf: &str, options: RenderOptions) -> Result<TestImage, Error> {
     let width = options.width;
     let height = options.height;
@@ -81,11 +84,13 @@ fn render(renderer: &mut Renderer, sdf: &str, options: RenderOptions) -> Result<
     })
 }
 
+#[cfg(feature = "gpu-test")]
 struct TestImage {
     width: u32,
     pixels: Vec<u8>,
 }
 
+#[cfg(feature = "gpu-test")]
 fn packed(view: &[u8], width: u32, height: u32) -> Vec<u8> {
     let row_bytes = width as usize * 4;
     let stride = row_bytes.div_ceil(256) * 256;
@@ -95,6 +100,7 @@ fn packed(view: &[u8], width: u32, height: u32) -> Vec<u8> {
         .collect()
 }
 
+#[cfg(feature = "gpu-test")]
 fn coverage(image: &TestImage) -> usize {
     image
         .pixels
@@ -105,6 +111,7 @@ fn coverage(image: &TestImage) -> usize {
         .count()
 }
 
+#[cfg(feature = "gpu-test")]
 fn centroid_y(image: &TestImage) -> f64 {
     let sum: usize = image
         .pixels
@@ -119,6 +126,7 @@ fn centroid_y(image: &TestImage) -> f64 {
 }
 
 #[test]
+#[cfg(feature = "gpu-test")]
 fn camera_and_lighting_affect_rendering() {
     let mut renderer = Renderer::new().unwrap();
     let sphere = include_str!("../examples/sphere.glsl");

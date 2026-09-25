@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a default-enabled `gpu-test` feature to the library and CLI. Disabling it
+  excludes GPU-dependent tests while preserving all rendering functionality.
+  Build and release CI now run workspace tests without per-test name filters;
+  normal local `cargo test` still includes GPU rendering tests.
+
 - Route CLI runtime diagnostics through `tracing`, with structured PNG path and
   dimensions, severity levels, and `RUST_LOG` filtering. Logs go to stderr with
   terminal-aware colors; the default filter is `warn,sdf_view=info`.

@@ -1,9 +1,6 @@
-use std::{
-    fs,
-    io::BufReader,
-    path::PathBuf,
-    process::{Command, Output},
-};
+use std::process::{Command, Output};
+#[cfg(feature = "gpu-test")]
+use std::{fs, io::BufReader, path::PathBuf};
 
 fn cli(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sdf-view"))
@@ -102,8 +99,10 @@ fn help_version_and_invalid_arguments() {
     }
 }
 
+#[cfg(feature = "gpu-test")]
 struct Workspace(PathBuf);
 
+#[cfg(feature = "gpu-test")]
 impl Workspace {
     fn new() -> Self {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -123,6 +122,7 @@ impl Workspace {
     }
 }
 
+#[cfg(feature = "gpu-test")]
 impl Drop for Workspace {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
@@ -130,6 +130,7 @@ impl Drop for Workspace {
 }
 
 #[test]
+#[cfg(feature = "gpu-test")]
 fn renders_png_and_reports_runtime_errors() {
     let workspace = Workspace::new();
     let source = include_str!("../../examples/sphere.glsl");

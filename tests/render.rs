@@ -1,3 +1,5 @@
+#![cfg(feature = "gpu-test")]
+
 use sdf_view::{Error, RenderOptions, Renderer};
 
 fn render(renderer: &mut Renderer, sdf: &str, options: RenderOptions) -> TestImage {

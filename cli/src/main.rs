@@ -357,6 +357,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "gpu-test")]
     fn png_output_errors_are_returned() {
         struct BrokenWriter;
         impl Write for BrokenWriter {
