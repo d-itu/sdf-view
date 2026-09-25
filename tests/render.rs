@@ -108,6 +108,12 @@ fn antialiasing_preserves_straight_alpha() {
 fn sphere_rendering_and_error_recovery() {
     let mut renderer = Renderer::new().expect("a working graphics adapter is required");
     eprintln!("Testing adapter: {:?}", renderer.adapter_info());
+    let pipeline = sdf_view::ScenePipeline::new(
+        renderer.device(),
+        include_str!("../examples/sphere.glsl"),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+    )
+    .unwrap();
 
     for options in [
         RenderOptions {
@@ -131,10 +137,25 @@ fn sphere_rendering_and_error_recovery() {
             ..Default::default()
         },
     ] {
-        std::assert_matches!(
-            renderer.render(include_str!("../examples/sphere.glsl"), options),
-            Err(Error::Dimensions(_))
-        );
+        if options.width == 0 || options.height == 0 || options.width == u32::MAX {
+            std::assert_matches!(
+                renderer.render(include_str!("../examples/sphere.glsl"), options),
+                Err(Error::Settings(_))
+            );
+            std::assert_matches!(
+                renderer.render_with_pipeline(&pipeline, options),
+                Err(Error::Settings(_))
+            );
+        } else {
+            std::assert_matches!(
+                renderer.render(include_str!("../examples/sphere.glsl"), options),
+                Err(Error::Gpu(_))
+            );
+            std::assert_matches!(
+                renderer.render_with_pipeline(&pipeline, options),
+                Err(Error::Gpu(_))
+            );
+        }
     }
     for source in [
         "float sdf(vec3 p) { return invalid_symbol; }",

@@ -210,6 +210,7 @@ impl Renderer {
         pipeline: &ScenePipeline,
         options: RenderOptions,
     ) -> Result<wgpu::BufferView, Error> {
+        let layout = ReadbackLayout::new([options.width, options.height])?;
         pipeline.update(&self.queue, options)?;
         let size = wgpu::Extent3d {
             width: options.width,
@@ -227,7 +228,6 @@ impl Renderer {
             view_formats: &[],
         });
 
-        let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SDF readback"),
             size: layout.buffer_size,
@@ -271,12 +271,9 @@ struct ReadbackLayout {
 }
 
 impl ReadbackLayout {
-    fn new([width, height]: [u32; 2], limits: &wgpu::Limits) -> Result<Self, Error> {
+    fn new([width, height]: [u32; 2]) -> Result<Self, SettingsError> {
         if width == 0 || height == 0 {
             return Err(Error::Dimensions("width and height must be nonzero"));
-        }
-        if width > limits.max_texture_dimension_2d || height > limits.max_texture_dimension_2d {
-            return Err(Error::Dimensions("image exceeds the device texture limit"));
         }
         let row_bytes = width
             .checked_mul(4)
@@ -288,9 +285,9 @@ impl ReadbackLayout {
             / alignment
             * alignment;
         let buffer_size = u64::from(padded_row_bytes) * u64::from(height);
-        if buffer_size > limits.max_buffer_size || usize::try_from(buffer_size).is_err() {
+        if usize::try_from(buffer_size).is_err() {
             return Err(Error::Dimensions(
-                "image exceeds the device readback buffer limit",
+                "image exceeds the addressable readback size",
             ));
         }
         Ok(Self {
@@ -307,7 +304,7 @@ mod tests {
     #[test]
     fn readback_padding() {
         for (width, padded) in [(1, 256), (64, 256), (65, 512), (129, 768)] {
-            let layout = ReadbackLayout::new([width, 3], &wgpu::Limits::default()).unwrap();
+            let layout = ReadbackLayout::new([width, 3]).unwrap();
             assert_eq!(layout.padded_row_bytes, padded);
             assert_eq!(layout.buffer_size, u64::from(padded) * 3);
         }
@@ -315,20 +312,11 @@ mod tests {
 
     #[test]
     fn invalid_dimensions() {
-        let limits = wgpu::Limits::default();
-        for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1), (1, u32::MAX)] {
+        for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1)] {
             std::assert_matches!(
-                ReadbackLayout::new([width, height], &limits),
+                ReadbackLayout::new([width, height]),
                 Err(Error::Dimensions(_))
             );
         }
-        let tiny_limits = wgpu::Limits {
-            max_buffer_size: 255,
-            ..limits
-        };
-        std::assert_matches!(
-            ReadbackLayout::new([1, 1], &tiny_limits),
-            Err(Error::Dimensions(_))
-        );
     }
 }

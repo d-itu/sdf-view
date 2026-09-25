@@ -77,7 +77,8 @@ GLSL features. Shader and pipeline validation failures return `Error::Gpu`.
 `background`. `Background` defaults to `Transparent` and also supports `Checkerboard`
 and `Rgb([u8; 3])` with sRGB components. Use
 `..Default::default()` when overriding only some fields. `validate()` checks
-scene settings without a GPU; `render()` also checks device size limits.
+scene settings without a GPU; `render()` delegates device-specific resource limits to
+wgpu after validating local arithmetic and dimensions.
 Invalid camera or lighting settings return `Error::Settings`. The CLI validates
 these before initializing the GPU and exits with code 2.
 
