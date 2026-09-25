@@ -65,7 +65,7 @@ impl Preview {
             {
                 config.alpha_mode = mode;
             } else {
-                eprintln!(
+                tracing::warn!(
                     "Window surface does not expose alpha compositing; transparent pixels may appear opaque. PNG output retains transparency."
                 );
             }
@@ -222,12 +222,7 @@ impl App {
                 .renderer
                 .render_with_pipeline(&preview.pipeline, options)?;
             crate::save_png(options.width, options.height, &pixels, output)?;
-            eprintln!(
-                "Saved {} ({}x{})",
-                output.display(),
-                options.width,
-                options.height
-            );
+            tracing::info!(path = %output.display(), width = options.width, height = options.height, "Saved PNG");
         }
         Ok(())
     }
@@ -347,7 +342,7 @@ impl ApplicationHandler for App {
                     _ => Ok(()),
                 };
                 if let Err(error) = result {
-                    eprintln!("error: {error}");
+                    tracing::error!("{error}");
                 }
                 self.redraw();
             }
@@ -369,7 +364,7 @@ pub fn run(args: Args, source: String) -> result::Result<(), String> {
         confined: false,
         error: None,
     };
-    eprintln!(
+    tracing::info!(
         "Left drag: orbit; right drag: pan; wheel: zoom; Home: reset; A: samples; R: reload; S: save; Esc: exit"
     );
     events.run_app(&mut app).map_err(|e| e.to_string())?;

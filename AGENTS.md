@@ -136,6 +136,16 @@ targets desktop Linux and Windows; mobile lifecycle handling is not implemented.
   CLI `--antialiasing` accepts only `1` or `4`. Dimensions and row layout are unchanged.
 - Shadows and specular lighting are not implemented.
 
+The CLI initializes `tracing_subscriber` after clap argument parsing and before
+scene validation. Runtime messages use `tracing` events: info for successful PNG
+saves and controls, warn for unavailable window alpha compositing, and error for
+failures. PNG events include path, width, and height fields. The subscriber writes
+to stderr without timestamps and only enables ANSI colors on terminals.
+`RUST_LOG` overrides the default `warn,sdf_view=info` filter; missing or invalid
+filters use the default. The subscriber also bridges dependency `log` events.
+The library never installs a global subscriber. Logging dependencies are enabled
+in the CLI with or without its `interactive` feature.
+
 ## Development
 
 The CLI package's `interactive` feature is enabled by default. It gates the

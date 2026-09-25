@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Route CLI runtime diagnostics through `tracing`, with structured PNG path and
+  dimensions, severity levels, and `RUST_LOG` filtering. Logs go to stderr with
+  terminal-aware colors; the default filter is `warn,sdf_view=info`.
+
 - Replace `--checkerboard` with `--background transparent|checkerboard|rgb(r,g,b)`.
 The default is `transparent` in interactive and offline modes. RGB components
 are sRGB integers in 0..=255. Windows, screenshots, and offline PNGs share the

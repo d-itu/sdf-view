@@ -39,6 +39,12 @@ cargo install --path cli --no-default-features
 That build omits `--interactive` and requires `-o` for every render. Background,
 camera, lighting, and antialiasing options remain available.
 
+Runtime logs are written to stderr. Use `RUST_LOG` to control verbosity, for example
+`RUST_LOG=debug sdf-view sphere.glsl -o sphere.png` for diagnostics or
+`RUST_LOG=error` to show only errors. The default is `warn,sdf_view=info`.
+Invalid filter values fall back to that default. Redirected logs contain no ANSI
+color codes; help and version output retain the standard CLI format.
+
 ## Interactive preview
 
 ```sh

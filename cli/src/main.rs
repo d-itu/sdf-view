@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{BufWriter, Write},
+    io::{BufWriter, IsTerminal, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -184,12 +184,7 @@ fn run(args: Args) -> Result<(), String> {
         .map_err(|error| format!("could not render '{}': {error}", args.input.display()))?;
     save_png(args.width, args.height, &pixels, output)
         .map_err(|error| format!("could not write '{}': {error}", output.display()))?;
-    eprintln!(
-        "Saved {} ({}x{})",
-        output.display(),
-        args.width,
-        args.height
-    );
+    tracing::info!(path = %output.display(), width = args.width, height = args.height, "Saved PNG");
     Ok(())
 }
 
@@ -242,14 +237,23 @@ fn padded_row_bytes(width: u32) -> usize {
 
 fn main() -> ExitCode {
     let args = Args::parse();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "warn,sdf_view=info".into()),
+        )
+        .with_writer(std::io::stderr)
+        .with_ansi(std::io::stderr().is_terminal())
+        .without_time()
+        .init();
     if let Err(error) = args.render_options().validate() {
-        eprintln!("error: {error}");
+        tracing::error!("{error}");
         return ExitCode::from(2);
     }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("error: {error}");
+            tracing::error!("{error}");
             ExitCode::FAILURE
         }
     }

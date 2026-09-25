@@ -15,6 +15,8 @@ glam = { version = "0.32", optional = true }
 png = "0.18.1"
 sdf-view = { path = "..", version = "0.1.1" }
 thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 wgpu = { version = "30", optional = true }
 winit = { version = "0.30", optional = true }
 

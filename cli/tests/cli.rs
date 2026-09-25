@@ -8,8 +8,32 @@ use std::{
 fn cli(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_sdf-view"))
         .args(args)
+        .env_remove("RUST_LOG")
         .output()
         .unwrap()
+}
+
+#[test]
+fn logs_to_stderr_with_environment_filter() {
+    for filter in [None, Some("invalid["), Some("off")] {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_sdf-view"));
+        command.args(["unused.glsl", "-o", "unused.png", "--fov", "180"]);
+        command.env_remove("RUST_LOG");
+        if let Some(filter) = filter {
+            command.env("RUST_LOG", filter);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        if filter == Some("off") {
+            assert!(output.stderr.is_empty());
+        } else {
+            let stderr = String::from_utf8(output.stderr).unwrap();
+            assert!(stderr.contains("ERROR"), "{stderr}");
+            assert!(stderr.contains("vertical FOV"), "{stderr}");
+            assert!(!stderr.contains('\u{1b}'));
+        }
+    }
 }
 
 #[test]
@@ -93,6 +117,7 @@ impl Workspace {
         Command::new(env!("CARGO_BIN_EXE_sdf-view"))
             .current_dir(&self.0)
             .args(args)
+            .env_remove("RUST_LOG")
             .output()
             .unwrap()
     }
