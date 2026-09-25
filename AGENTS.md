@@ -171,6 +171,26 @@ repository write permission. Actions are pinned to commit SHAs.
 Linux assets use the Ubuntu 24.04 runner's glibc environment, not a static
 portable build. Rendering requires a compatible runtime graphics driver.
 
+### v0.1.1 release notes
+
+- Export the Vulkan loader path directly from the Nix development environment so
+  `cargo run` works when tools import environment variables without `shellHook`.
+- Validate image dimensions and readback limits before creating GPU resources,
+  returning `Error::Dimensions` consistently for oversized images.
+- Remove heap allocations from CLI vector parsing and temporary GLSL vector
+  formatting. Add Rust and TOML formatting checks to CI.
+- Split the CLI into the `sdf-view-cli` workspace package, keeping the binary name
+  `sdf-view`. PNG encoding and clap dependencies now belong only to the CLI.
+- Return mapped GPU readback memory directly, avoiding CPU image copies. The CLI
+  encodes PNG rows directly from the mapped view.
+
+Library API migration from v0.1.0: `Renderer::render` now returns
+`wgpu::BufferView` instead of `Image`. Obtain dimensions from `RenderOptions` and
+read `width * 4` bytes per row with a stride rounded up to 256 bytes. `Image` and
+its pixel access and PNG output methods are removed, along with `Error::Png` and
+`Error::Io`. PNG encoding is the caller's responsibility. CLI arguments and PNG
+output behavior remain compatible with v0.1.0.
+
 ### v0.1.0 release notes
 
 Initial release of sdf-view:
@@ -191,8 +211,8 @@ subset is supported; surface material is fixed; antialiasing, shadows, and
 specular lighting are not implemented. Linux release binaries are built on
 Ubuntu 24.04 and are not statically linked portable binaries.
 
-The package version is `0.1.0` in `Cargo.toml`, `cli/Cargo.toml`, and `Cargo.lock`.
-The existing local `v0.1.0` tag predates the workspace split and remains unchanged.
+The package version is `0.1.1` in `Cargo.toml`, `cli/Cargo.toml`, and `Cargo.lock`,
+with release tag `v0.1.1`. The existing `v0.1.0` tag remains unchanged.
 Release preparation is local only until the commit and tag are explicitly
 pushed. A local Nix build is a validation artifact, not a substitute for the
 Ubuntu/Windows assets produced by the release workflow.

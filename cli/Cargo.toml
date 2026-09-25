@@ -1,6 +1,6 @@
 [package]
 name = "sdf-view-cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [[bin]]
@@ -11,4 +11,4 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 png = "0.18.1"
-sdf-view = { path = "..", version = "0.1.0" }
+sdf-view = { path = "..", version = "0.1.1" }
