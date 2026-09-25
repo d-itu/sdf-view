@@ -9,7 +9,7 @@ use std::{
 mod interactive;
 
 use clap::Parser;
-use sdf_view::{Antialiasing, Camera, DirectionalLight, RenderOptions, Renderer};
+use sdf_view::{Antialiasing, Background, Camera, DirectionalLight, RenderOptions, Renderer};
 
 /// Render a GLSL signed distance function to a PNG image.
 #[derive(Debug, Parser)]
@@ -29,6 +29,10 @@ struct Args {
     /// Open an interactive preview window
     #[arg(short, long)]
     interactive: bool,
+
+    /// Background: transparent, checkerboard, or rgb(0-255,0-255,0-255)
+    #[arg(long, default_value = "transparent", value_parser = parse_background)]
+    background: Background,
 
     /// Image width in pixels
     #[arg(long, default_value_t = 512, value_parser = clap::value_parser!(u32).range(1..))]
@@ -73,6 +77,39 @@ struct Args {
     /// Nonnegative white ambient light strength
     #[arg(long, default_value_t = 0.15, allow_negative_numbers = true)]
     ambient: f32,
+}
+
+#[derive(Debug, thiserror::Error, Clone, Copy)]
+#[error("expected transparent, checkerboard, or rgb(r,g,b) with integer components in 0..=255")]
+struct InvalidBackground;
+
+fn parse_background(value: &str) -> Result<Background, InvalidBackground> {
+    match value {
+        "transparent" => Ok(Background::Transparent),
+        "checkerboard" => Ok(Background::Checkerboard),
+        "black" => Ok(Background::Rgb([0, 0, 0])),
+        "white" => Ok(Background::Rgb([255, 255, 255])),
+        _ => {
+            let body = value
+                .strip_prefix("rgb(")
+                .and_then(|v| v.strip_suffix(')'))
+                .ok_or(InvalidBackground)?;
+            let mut parts = body.split(',');
+            let mut color = [0; 3];
+            for component in &mut color {
+                *component = parts
+                    .next()
+                    .ok_or(InvalidBackground)?
+                    .trim()
+                    .parse::<u8>()
+                    .map_err(|_| InvalidBackground)?;
+            }
+            if parts.next().is_some() {
+                return Err(InvalidBackground);
+            }
+            Ok(Background::Rgb(color))
+        }
+    }
 }
 
 fn parse_antialiasing(value: &str) -> Result<Antialiasing, &'static str> {
@@ -121,6 +158,7 @@ impl Args {
                 intensity: self.light_intensity,
                 ambient: self.ambient,
             },
+            background: self.background,
         }
     }
 }
@@ -227,6 +265,36 @@ mod tests {
         let args = Args::try_parse_from(["sdf-view", "sphere.glsl", "--interactive"]).unwrap();
         assert!(args.interactive);
         assert!(args.output.is_none());
+        assert_eq!(args.background, Background::Transparent);
+        for mode in [vec!["--interactive"], vec!["-o", "out.png"]] {
+            for (value, expected) in [
+                ("transparent", Background::Transparent),
+                ("checkerboard", Background::Checkerboard),
+                ("rgb(12, 128,255)", Background::Rgb([12, 128, 255])),
+            ] {
+                let mut argv = vec!["sdf-view", "sphere.glsl"];
+                argv.extend(&mode);
+                argv.extend(["--background", value]);
+                let args = Args::try_parse_from(argv).unwrap();
+                assert_eq!(args.render_options().background, expected);
+            }
+        }
+        for value in [
+            "rgb(256,0,0)",
+            "rgb(-1,0,0)",
+            "rgb(1,2)",
+            "rgb(1,2,3,4)",
+            "rgb(1.5,2,3)",
+            "red",
+            "rgb(1,2,3",
+            "",
+        ] {
+            assert!(parse_background(value).is_err(), "{value}");
+        }
+        assert!(
+            Args::try_parse_from(["sdf-view", "sphere.glsl", "--interactive", "--checkerboard"])
+                .is_err()
+        );
         let args = Args::try_parse_from([
             "sdf-view",
             "sphere.glsl",

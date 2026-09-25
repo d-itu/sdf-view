@@ -49,7 +49,19 @@ pub enum Antialiasing {
     X4,
 }
 
-/// Image dimensions, camera, lighting, and antialiasing for a render.
+/// Background shared by headless rendering and interactive previews.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Background {
+    /// Preserve transparent pixels and antialiased coverage.
+    #[default]
+    Transparent,
+    /// Composite onto a 16-pixel gray checkerboard.
+    Checkerboard,
+    /// Composite onto an opaque sRGB color with 8-bit components.
+    Rgb([u8; 3]),
+}
+
+/// Image dimensions, camera, lighting, antialiasing, and background for a render.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOptions {
     pub width: u32,
@@ -57,6 +69,7 @@ pub struct RenderOptions {
     pub camera: Camera,
     pub light: DirectionalLight,
     pub antialiasing: Antialiasing,
+    pub background: Background,
 }
 
 impl Default for RenderOptions {
@@ -67,6 +80,7 @@ impl Default for RenderOptions {
             camera: Camera::default(),
             light: DirectionalLight::default(),
             antialiasing: Antialiasing::default(),
+            background: Background::default(),
         }
     }
 }
@@ -196,8 +210,7 @@ impl Renderer {
         pipeline: &ScenePipeline,
         options: RenderOptions,
     ) -> Result<wgpu::BufferView, Error> {
-        let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
-        pipeline.update(&self.queue, options, false)?;
+        pipeline.update(&self.queue, options)?;
         let size = wgpu::Extent3d {
             width: options.width,
             height: options.height,
@@ -214,6 +227,7 @@ impl Renderer {
             view_formats: &[],
         });
 
+        let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SDF readback"),
             size: layout.buffer_size,

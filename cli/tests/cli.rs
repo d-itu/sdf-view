@@ -23,10 +23,14 @@ fn help_version_and_invalid_arguments() {
         "--width",
         "--height",
         "--antialiasing",
+        "--background",
     ] {
         assert!(text.contains(flag), "missing {flag}");
     }
     for extra in [
+        vec!["--background", "rgb(256,0,0)"],
+        vec!["--background", "rgb(1,2)"],
+        vec!["--checkerboard"],
         vec!["--antialiasing", "0"],
         vec!["--antialiasing", "2"],
         vec!["--antialiasing", "16"],
@@ -176,6 +180,51 @@ fn renders_png_and_reports_runtime_errors() {
         assert_eq!(pixels[3], 0);
         let center = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
         assert_eq!(pixels[center + 3], 255);
+    }
+
+    fs::write(
+        workspace.0.join("empty.glsl"),
+        "float sdf(vec3 p) { return 200.0; }",
+    )
+    .unwrap();
+    for background in ["transparent", "checkerboard", "rgb(12,128,255)"] {
+        let output = workspace.run(&[
+            "empty.glsl",
+            "-o",
+            "background.png",
+            "--width",
+            "33",
+            "--height",
+            "17",
+            "--background",
+            background,
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mut reader = png::Decoder::new(BufReader::new(
+            fs::File::open(workspace.0.join("background.png")).unwrap(),
+        ))
+        .read_info()
+        .unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        reader.next_frame(&mut pixels).unwrap();
+        match background {
+            "transparent" => assert!(pixels.iter().all(|v| *v == 0)),
+            "checkerboard" => {
+                assert!(pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 255));
+                assert_ne!(&pixels[..4], &pixels[64..68]);
+            }
+            _ => assert!(
+                pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .all(|p| p == &[12, 128, 255, 255])
+            ),
+        }
     }
 
     let custom = workspace.run(&[

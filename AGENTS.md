@@ -46,6 +46,7 @@ fn main() -> Result<(), sdf_view::Error> {
             color: [1.0, 0.9, 0.8],
             ..Default::default()
         },
+        ..Default::default()
     };
     let pixels = renderer.render("float sdf(vec3 p) { return length(p) - 1.0; }", options)?;
     println!("Rendered {}x{} pixels ({} mapped bytes)", options.width, options.height, pixels.len());
@@ -72,7 +73,9 @@ Helper functions are supported, but user snippets must omit `#version`, `main`,
 and resource bindings. Reserve the `sdf_view_` prefix. Naga does not implement all
 GLSL features. Shader and pipeline validation failures return `Error::Gpu`.
 
-`RenderOptions` includes `width`, `height`, `camera`, `light`, and `antialiasing`. Use
+`RenderOptions` includes `width`, `height`, `camera`, `light`, `antialiasing`, and
+`background`. `Background` defaults to `Transparent` and also supports `Checkerboard`
+and `Rgb([u8; 3])` with sRGB components. Use
 `..Default::default()` when overriding only some fields. `validate()` checks
 scene settings without a GPU; `render()` also checks device size limits.
 Invalid camera or lighting settings return `Error::Settings`. The CLI validates
@@ -81,25 +84,34 @@ these before initializing the GPU and exits with code 2.
 ### Interactive rendering
 
 `ScenePipeline::new(device, sdf, format)` compiles a reusable pipeline targeting an
-sRGB texture format. `update(queue, options, preview)` uploads a fixed-size scene
-uniform without recompilation, including the 1/4-ray sampling mode. `draw` records
-commands into a caller-owned encoder and texture view. Use the same device and
-queue for all resources; submit a draw before uploading parameters for another
-view. The preview flag composites onto an opaque checkerboard in linear space.
+sRGB texture format. `update(queue, options)` uploads a fixed-size scene
+uniform without recompilation, including the 1/4-ray sampling mode and background.
+`draw` records commands into a caller-owned encoder and texture view. Use the same
+device and queue for all resources; submit a draw before uploading parameters for
+another view. RGB backgrounds are decoded from sRGB and composited in linear space;
+checkerboards use 16-pixel squares. Both opaque backgrounds produce alpha 1.
+`update_surface(queue, options, premultiplied)` additionally supports surfaces
+requiring premultiplied alpha. Headless output always uses straight alpha.
+Transparent windows request alpha compositing, preferring PostMultiplied then
+PreMultiplied; actual desktop transparency depends on compositor support.
 Naga reflection rejects user resource bindings, including unused declarations.
 
 The CLI selects a surface-compatible adapter and constructs the renderer with
 `Renderer::from_adapter`; `device()` and `queue()` allow direct GPU drawing.
 Window redraws reuse the pipeline without CPU readback. Reload compiles a candidate
 pipeline before replacing the current pipeline and source. Screenshots use the
-same renderer's synchronous `render` path with preview disabled, preserving PNG
-transparency. Reload and screenshot failures leave the preview running.
+same renderer's synchronous `render` path with the current background setting.
+Reload and screenshot failures leave the preview running.
 
 The event loop waits when idle, suspends rendering for zero-sized/occluded windows,
 and handles outdated and lost surfaces. Initial dimensions are physical pixels;
 resize events update the surface and scene resolution. Camera controls preserve
 the configured target/up axis, validate candidate settings, constrain orbit poles,
-and clamp zoom distance to 0.01–10000 world units. Window interaction currently
+and clamp zoom distance to 0.01–10000 world units. Dragging uses logical pixels,
+allows only one active operation, and requests cursor confinement while pressed.
+Focus loss cancels dragging; leaving the window cancels it when confinement is
+unavailable. Pitch is clamped continuously so large motion cannot cross a pole.
+Window interaction currently
 targets desktop Linux and Windows; mobile lifecycle handling is not implemented.
 
 ### Rendering conventions
@@ -116,7 +128,7 @@ targets desktop Linux and Windows; mobile lifecycle handling is not implemented.
   with a finite sum. Values above 1 can saturate the PNG output.
 - Illumination is `albedo * (ambient + color * intensity * max(dot(normal, direction), 0))`.
 - Sphere tracing uses at most 256 steps, a 100-unit travel limit, and a
-  0.001-unit hit tolerance. The surface is blue and the background transparent.
+  0.001-unit hit tolerance. The surface is blue; the background defaults to transparent.
 - Antialiasing defaults to `Antialiasing::X1` (one pixel-center ray). `X4` traces
   a 2-by-2 grid at offsets of +/-0.25 pixels. Hit colors are averaged in linear
   space before sRGB encoding; alpha is the hit fraction. Output uses straight

@@ -30,6 +30,7 @@ impl Preview {
         let window = Arc::new(
             events.create_window(
                 Window::default_attributes()
+                    .with_transparent(matches!(args.background, sdf_view::Background::Transparent))
                     .with_title("sdf-view")
                     .with_inner_size(PhysicalSize::new(args.width, args.height)),
             )?,
@@ -53,6 +54,22 @@ impl Preview {
             .into_iter()
             .find(|format| format.is_srgb())
             .ok_or("surface has no sRGB format")?;
+        if matches!(args.background, sdf_view::Background::Transparent) {
+            let modes = surface.get_capabilities(&adapter).alpha_modes;
+            if let Some(mode) = [
+                wgpu::CompositeAlphaMode::PostMultiplied,
+                wgpu::CompositeAlphaMode::PreMultiplied,
+            ]
+            .into_iter()
+            .find(|mode| modes.contains(mode))
+            {
+                config.alpha_mode = mode;
+            } else {
+                eprintln!(
+                    "Window surface does not expose alpha compositing; transparent pixels may appear opaque. PNG output retains transparency."
+                );
+            }
+        }
         let pipeline = ScenePipeline::new(renderer.device(), source, config.format)?;
         let mut preview = Self {
             window,
@@ -113,7 +130,11 @@ impl Preview {
                 return Err("surface validation failed".into());
             }
         };
-        self.pipeline.update(self.renderer.queue(), options, true)?;
+        self.pipeline.update_surface(
+            self.renderer.queue(),
+            options,
+            self.config.alpha_mode == wgpu::CompositeAlphaMode::PreMultiplied,
+        )?;
         let mut encoder = self
             .renderer
             .device()

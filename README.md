@@ -27,7 +27,7 @@ sdf-view --version
 To run from source, use `cargo run --` in place of `sdf-view`.
 The output path is required for PNG rendering; in interactive mode it is optional
 and enables screenshots. Its parent directory must exist, and existing files are
-overwritten. The rendered surface is blue with a transparent background.
+overwritten. The rendered surface is blue with a transparent background by default.
 
 The CLI package enables its `interactive` Cargo feature by default. For an
 installation that only renders PNG files:
@@ -43,13 +43,22 @@ camera, lighting, and antialiasing options remain available.
 
 ```sh
 sdf-view sphere.glsl --interactive
-sdf-view sphere.glsl --interactive --antialiasing 4 -o snapshot.png
+sdf-view sphere.glsl --interactive --background checkerboard --antialiasing 4 -o snapshot.png
 ```
 
 A desktop session is required (Wayland or X11 on Linux, or Windows). Camera,
 lighting, sampling, and width/height options set the initial view. Width and height
 are physical pixels; resizing the window updates the image dimensions. Transparent
-areas appear over a checkerboard in the preview; saved PNGs retain transparency.
+areas remain transparent by default. `--background` accepts `transparent`,
+`checkerboard`, or `rgb(r,g,b)` with integer sRGB components from 0 to 255.
+The selected background applies equally to the window, screenshots, and offline PNGs.
+Transparent windows require desktop compositor support; without it, transparent
+pixels may appear opaque on screen while PNG transparency remains intact.
+
+```sh
+sdf-view sphere.glsl -o sphere.png --background 'rgb(24,32,48)'
+sdf-view sphere.glsl --interactive --background transparent
+```
 
 | Input | Action |
 | --- | --- |
@@ -72,6 +81,7 @@ input while idle.
 | --- | --- | --- |
 | `-o, --output <PNG>` | Output or screenshot file | Required unless interactive |
 | `--interactive` | Open a preview window | Off |
+| `--background <BACKGROUND>` | `transparent`, `checkerboard`, or `rgb(r,g,b)` (0–255) | `transparent` |
 | `--width <PIXELS>` | Image width | `512` |
 | `--height <PIXELS>` | Image height | `512` |
 | `--antialiasing <SAMPLES>` | Rays per pixel: 1 disables antialiasing, 4 uses a 2×2 grid | `1` |

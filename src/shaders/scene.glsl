@@ -6,7 +6,7 @@ layout(set = 0, binding = 0, std140) uniform sdf_view_Scene {
     vec4 up;
     vec4 light_direction;
     vec4 light_color;
-    vec4 reserved;
+    vec4 background;
 } sdf_view_scene;
 #define sdf_view_resolution sdf_view_scene.resolution.xy
 #define sdf_view_sample_grid int(sdf_view_scene.resolution.z)

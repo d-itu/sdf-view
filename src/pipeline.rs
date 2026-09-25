@@ -136,13 +136,34 @@ impl ScenePipeline {
         })
     }
 
-    /// Update scene parameters. Preview composites onto an opaque checkerboard.
-    pub fn update(
+    /// Upload scene parameters, including the background, using straight alpha.
+    pub fn update(&self, queue: &wgpu::Queue, options: RenderOptions) -> Result<(), Error> {
+        self.update_surface(queue, options, false)
+    }
+
+    /// Upload scene parameters for a window surface.
+    /// Set `premultiplied` only when the surface uses premultiplied alpha.
+    pub fn update_surface(
         &self,
         queue: &wgpu::Queue,
         options: RenderOptions,
-        preview: bool,
+        premultiplied: bool,
     ) -> Result<(), Error> {
+        let (background, color) = match options.background {
+            crate::Background::Transparent => (0.0, [0.0; 3]),
+            crate::Background::Checkerboard => (1.0, [0.0; 3]),
+            crate::Background::Rgb(color) => (
+                2.0,
+                color.map(|value| {
+                    let srgb = f32::from(value) / 255.0;
+                    if srgb <= 0.04045 {
+                        srgb / 12.92
+                    } else {
+                        ((srgb + 0.055) / 1.055).powf(2.4)
+                    }
+                }),
+            ),
+        };
         options.validate()?;
         let basis = options.camera.basis()?;
         let light = options.light.normalized_direction()?;
@@ -154,7 +175,7 @@ impl ScenePipeline {
                     Antialiasing::X1 => 1.0,
                     Antialiasing::X4 => 2.0,
                 },
-                if preview { 1.0 } else { 0.0 },
+                background,
             ],
             [
                 options.camera.position[0],
@@ -172,7 +193,12 @@ impl ScenePipeline {
                 options.light.color[2],
                 options.light.ambient,
             ],
-            [0.0; 4],
+            [
+                color[0],
+                color[1],
+                color[2],
+                if premultiplied { 1.0 } else { 0.0 },
+            ],
         ];
         let mut bytes = [0u8; 128];
         for (dst, value) in bytes
