@@ -94,7 +94,6 @@ impl Drop for Workspace {
 fn renders_png_and_reports_runtime_errors() {
     let workspace = Workspace::new();
     let source = include_str!("../../examples/sphere.glsl");
-    let mut renderer = sdf_view::Renderer::new().unwrap();
     fs::write(workspace.0.join("sphere.glsl"), source).unwrap();
 
     let missing = workspace.run(&["missing.glsl", "-o", "image.png"]);
@@ -136,7 +135,8 @@ fn renders_png_and_reports_runtime_errors() {
             reader.info().srgb,
             Some(png::SrgbRenderingIntent::Perceptual)
         );
-        let image = renderer
+        let mut renderer = sdf_view::Renderer::new().unwrap();
+        let mapped = renderer
             .render(
                 source,
                 sdf_view::RenderOptions {
@@ -146,7 +146,15 @@ fn renders_png_and_reports_runtime_errors() {
                 },
             )
             .unwrap();
-        assert_eq!(&pixels[..frame.buffer_size()], image.pixels());
+        let row_bytes = expected.0 as usize * 4;
+        let stride = row_bytes.div_ceil(256) * 256;
+        assert_eq!(mapped.len(), stride * expected.1 as usize);
+        for (decoded, row) in pixels[..frame.buffer_size()]
+            .chunks_exact(row_bytes)
+            .zip(mapped.chunks_exact(stride))
+        {
+            assert_eq!(decoded, &row[..row_bytes]);
+        }
         assert_eq!(pixels[3], 0);
         let center = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
         assert_eq!(pixels[center + 3], 255);

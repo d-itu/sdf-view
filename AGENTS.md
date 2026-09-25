@@ -42,23 +42,20 @@ fn main() -> Result<(), sdf_view::Error> {
             ..Default::default()
         },
     };
-    let image = renderer.render("float sdf(vec3 p) { return length(p) - 1.0; }", options)?;
-    println!("Rendered {}x{} pixels", image.width(), image.height());
+    let pixels = renderer.render("float sdf(vec3 p) { return length(p) - 1.0; }", options)?;
+    println!("Rendered {}x{} pixels ({} mapped bytes)", options.width, options.height, pixels.len());
     Ok(())
 }
 ```
 
-Reuse `Renderer` across calls to retain the graphics device. `Image` owns a mapped
-wgpu buffer view and remains valid after the renderer is dropped. `width()` and
-`height()` expose its dimensions. `rows()` borrows top-to-bottom sRGB RGBA8 rows
-without alignment padding or CPU copies. `pixels()` preserves the tightly packed
-slice API: aligned images borrow mapped memory directly; padded images allocate
-and cache a packed copy on first access. Holding images retains their readback
-buffers, so drop them when no longer needed.
+`Renderer::render` returns a mapped `wgpu::BufferView` containing top-to-bottom
+sRGB RGBA8 pixels. Its row stride is the width times four rounded up to
+`wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`; callers can consume each row directly
+without a packed image allocation. The mapped view owns the readback buffer and
+remains valid after the renderer is dropped.
 
-PNG encoding and output errors belong to the CLI. It streams `rows()` into the
-encoder without allocating a packed image. The former library `write_png()` and
-`save_png()` methods and `Error::Png`/`Error::Io` variants are removed.
+PNG encoding and output errors belong to the CLI. It streams mapped rows into the
+encoder without allocating a packed image. The library has no PNG dependency.
 `futures::executor::block_on` and a oneshot channel bridge GPU mapping callbacks;
 explicit device polling is still required.
 

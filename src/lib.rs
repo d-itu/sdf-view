@@ -6,12 +6,11 @@
 //! missed rays produce transparent black pixels. This blocking API targets
 //! native applications and requires a working wgpu graphics adapter.
 
-use std::{borrow::Cow, sync::OnceLock};
+use std::{borrow::Cow, fmt};
 
 use futures::{channel::oneshot, executor::block_on};
 
 mod scene;
-use scene::glsl_vec3;
 pub use scene::{Camera, DirectionalLight};
 
 /// Errors from initialization or rendering.
@@ -70,48 +69,6 @@ impl RenderOptions {
     }
 }
 
-/// An image backed by mapped GPU readback memory, in top-to-bottom sRGB RGBA8.
-/// The image remains valid after its renderer is dropped.
-#[derive(Debug)]
-pub struct Image {
-    width: u32,
-    height: u32,
-    mapped: wgpu::BufferView,
-    row_bytes: usize,
-    row_stride: usize,
-    packed: OnceLock<Vec<u8>>,
-}
-
-impl Image {
-    pub fn width(&self) -> u32 {
-        self.width
-    }
-    pub fn height(&self) -> u32 {
-        self.height
-    }
-    /// Borrow tightly packed pixels. Aligned images need no CPU copy; images
-    /// with row padding are packed once on demand and cached.
-    pub fn pixels(&self) -> &[u8] {
-        if self.row_bytes == self.row_stride {
-            return &self.mapped;
-        }
-        self.packed.get_or_init(|| {
-            let mut pixels = Vec::with_capacity(self.row_bytes * self.height as usize);
-            for row in self.rows() {
-                pixels.extend_from_slice(row);
-            }
-            pixels
-        })
-    }
-
-    /// Borrow pixel rows without alignment padding or CPU copies.
-    pub fn rows(&self) -> impl ExactSizeIterator<Item = &[u8]> {
-        self.mapped
-            .chunks_exact(self.row_stride)
-            .map(|row| &row[..self.row_bytes])
-    }
-}
-
 /// A reusable, headless graphics device for SDF rendering.
 pub struct Renderer {
     device: wgpu::Device,
@@ -164,14 +121,17 @@ impl Renderer {
     /// hit tolerance. The function must return a signed distance (or a
     /// conservative distance estimate) for reliable results.
     /// Compilation and validation errors are returned instead of panicking.
-    pub fn render(&mut self, sdf: &str, options: RenderOptions) -> Result<Image, Error> {
+    /// The returned view owns top-to-bottom sRGB RGBA8 readback memory, even
+    /// after the renderer is dropped. Each row contains `options.width * 4`
+    /// pixel bytes followed by padding to a multiple of 256 bytes
+    /// ([`wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`]). The view length is the padded
+    /// row stride times `options.height`. No CPU pixel copy is performed.
+    pub fn render(&mut self, sdf: &str, options: RenderOptions) -> Result<wgpu::BufferView, Error> {
         options.validate()?;
-        let limits = self.device.limits();
-        let layout = ReadbackLayout::new(options, &limits)?;
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
-        let result = self.render_inner(sdf, options, layout);
+        let result = self.render_inner(sdf, options);
         let internal_error = block_on(internal.pop());
         let memory_error = block_on(memory.pop());
         let validation_error = block_on(validation.pop());
@@ -181,36 +141,34 @@ impl Renderer {
         result
     }
 
-    fn render_inner(
-        &self,
-        sdf: &str,
-        options: RenderOptions,
-        layout: ReadbackLayout,
-    ) -> Result<Image, Error> {
+    fn render_inner(&self, sdf: &str, options: RenderOptions) -> Result<wgpu::BufferView, Error> {
+        fn vec3(v: [f32; 3]) -> impl fmt::Display {
+            fmt::from_fn(move |f| write!(f, "vec3({:?}, {:?}, {:?})", v[0], v[1], v[2]))
+        }
         let basis = options.camera.basis()?;
         let light_direction = options.light.normalized_direction()?;
         let source = format!(
             "#version 450\n\
-             const vec2 sdf_view_resolution = vec2({}.0, {}.0);\n\
-             const vec3 sdf_view_origin = {};\n\
-             const vec3 sdf_view_forward = {};\n\
-             const vec3 sdf_view_right = {};\n\
-             const vec3 sdf_view_up = {};\n\
-             const float sdf_view_fov_scale = {:?};\n\
-             const vec3 sdf_view_light_direction = {};\n\
-             const vec3 sdf_view_light_color = {};\n\
-             const float sdf_view_light_intensity = {:?};\n\
-             const float sdf_view_ambient = {:?};\n\
-             #line 1 1\n{}\n#line 1 0\n{}",
+            const vec2 sdf_view_resolution = vec2({}.0, {}.0);\n\
+            const vec3 sdf_view_origin = {};\n\
+            const vec3 sdf_view_forward = {};\n\
+            const vec3 sdf_view_right = {};\n\
+            const vec3 sdf_view_up = {};\n\
+            const float sdf_view_fov_scale = {:?};\n\
+            const vec3 sdf_view_light_direction = {};\n\
+            const vec3 sdf_view_light_color = {};\n\
+            const float sdf_view_light_intensity = {:?};\n\
+            const float sdf_view_ambient = {:?};\n\
+            #line 1 1\n{}\n#line 1 0\n{}",
             options.width,
             options.height,
-            glsl_vec3(options.camera.position),
-            glsl_vec3(basis.forward),
-            glsl_vec3(basis.right),
-            glsl_vec3(basis.up),
+            vec3(options.camera.position),
+            vec3(basis.forward),
+            vec3(basis.right),
+            vec3(basis.up),
             (options.camera.vertical_fov_degrees.to_radians() * 0.5).tan(),
-            glsl_vec3(light_direction),
-            glsl_vec3(options.light.color),
+            vec3(light_direction),
+            vec3(options.light.color),
             options.light.intensity,
             options.light.ambient,
             sdf,
@@ -291,6 +249,8 @@ impl Renderer {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
+
+        let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SDF readback"),
             size: layout.buffer_size,
@@ -339,26 +299,18 @@ impl Renderer {
         self.device.poll(wgpu::PollType::wait_indefinitely())?;
         block_on(receiver).map_err(|_| Error::ReadbackDisconnected)??;
         let mapped = slice.get_mapped_range()?;
-        Ok(Image {
-            width: options.width,
-            height: options.height,
-            mapped,
-            row_bytes: layout.row_bytes as usize,
-            row_stride: layout.padded_row_bytes as usize,
-            packed: OnceLock::new(),
-        })
+        Ok(mapped)
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 struct ReadbackLayout {
-    row_bytes: u32,
     padded_row_bytes: u32,
     buffer_size: u64,
 }
 
 impl ReadbackLayout {
-    fn new(options: RenderOptions, limits: &wgpu::Limits) -> Result<Self, Error> {
-        let RenderOptions { width, height, .. } = options;
+    fn new([width, height]: [u32; 2], limits: &wgpu::Limits) -> Result<Self, Error> {
         if width == 0 || height == 0 {
             return Err(Error::Dimensions("width and height must be nonzero"));
         }
@@ -381,7 +333,6 @@ impl ReadbackLayout {
             ));
         }
         Ok(Self {
-            row_bytes,
             padded_row_bytes,
             buffer_size,
         })
@@ -395,16 +346,7 @@ mod tests {
     #[test]
     fn readback_padding() {
         for (width, padded) in [(1, 256), (64, 256), (65, 512), (129, 768)] {
-            let layout = ReadbackLayout::new(
-                RenderOptions {
-                    width,
-                    height: 3,
-                    ..Default::default()
-                },
-                &wgpu::Limits::default(),
-            )
-            .unwrap();
-            assert_eq!(layout.row_bytes, width * 4);
+            let layout = ReadbackLayout::new([width, 3], &wgpu::Limits::default()).unwrap();
             assert_eq!(layout.padded_row_bytes, padded);
             assert_eq!(layout.buffer_size, u64::from(padded) * 3);
         }
@@ -414,32 +356,18 @@ mod tests {
     fn invalid_dimensions() {
         let limits = wgpu::Limits::default();
         for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1), (1, u32::MAX)] {
-            assert!(matches!(
-                ReadbackLayout::new(
-                    RenderOptions {
-                        width,
-                        height,
-                        ..Default::default()
-                    },
-                    &limits
-                ),
+            std::assert_matches!(
+                ReadbackLayout::new([width, height], &limits),
                 Err(Error::Dimensions(_))
-            ));
+            );
         }
         let tiny_limits = wgpu::Limits {
             max_buffer_size: 255,
             ..limits
         };
-        assert!(matches!(
-            ReadbackLayout::new(
-                RenderOptions {
-                    width: 1,
-                    height: 1,
-                    ..Default::default()
-                },
-                &tiny_limits
-            ),
+        std::assert_matches!(
+            ReadbackLayout::new([1, 1], &tiny_limits),
             Err(Error::Dimensions(_))
-        ));
+        );
     }
 }

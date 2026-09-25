@@ -136,7 +136,3 @@ fn cross(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
         a[0] * b[1] - a[1] * b[0],
     ]
 }
-
-pub(crate) fn glsl_vec3(v: [f32; 3]) -> String {
-    format!("vec3({:?}, {:?}, {:?})", v[0], v[1], v[2])
-}

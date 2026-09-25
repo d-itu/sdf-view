@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::Parser;
-use sdf_view::{Camera, DirectionalLight, Image, RenderOptions, Renderer};
+use sdf_view::{Camera, DirectionalLight, RenderOptions, Renderer};
 
 /// Render a GLSL signed distance function to a PNG image.
 #[derive(Debug, Parser)]
@@ -61,17 +61,22 @@ struct Args {
     ambient: f32,
 }
 
-fn parse_vec3(value: &str) -> Result<[f32; 3], String> {
-    let values: Vec<f32> = value
-        .split(',')
-        .map(|part| part.trim().parse::<f32>())
-        .collect::<Result<_, _>>()
-        .map_err(|_| "expected three comma-separated numbers".to_string())?;
-    let vector: [f32; 3] = values
-        .try_into()
-        .map_err(|_| "expected exactly three comma-separated numbers".to_string())?;
+fn parse_vec3(value: &str) -> Result<[f32; 3], &'static str> {
+    let mut parts = value.split(',');
+    let mut vector = [0.0_f32; 3];
+    for component in &mut vector {
+        *component = parts
+            .next()
+            .ok_or("expected exactly three comma-separated numbers")?
+            .trim()
+            .parse()
+            .map_err(|_| "expected three comma-separated numbers")?;
+    }
+    if parts.next().is_some() {
+        return Err("expected exactly three comma-separated numbers");
+    }
     if !vector.iter().all(|value| value.is_finite()) {
-        return Err("vector components must be finite".into());
+        return Err("vector components must be finite");
     }
     Ok(vector)
 }
@@ -109,41 +114,56 @@ fn run(args: Args) -> Result<(), String> {
     }
     let mut renderer =
         Renderer::new().map_err(|error| format!("could not initialize renderer: {error}"))?;
-    let image = renderer
+    let pixels = renderer
         .render(&source, args.render_options())
         .map_err(|error| format!("could not render '{}': {error}", args.input.display()))?;
-    save_png(&image, &args.output)
+    save_png(args.width, args.height, &pixels, &args.output)
         .map_err(|error| format!("could not write '{}': {error}", args.output.display()))?;
     eprintln!(
         "Saved {} ({}x{})",
         args.output.display(),
-        image.width(),
-        image.height()
+        args.width,
+        args.height
     );
     Ok(())
 }
 
-fn write_png(image: &Image, output: impl Write) -> Result<(), png::EncodingError> {
-    let mut encoder = png::Encoder::new(output, image.width(), image.height());
+fn write_png(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    output: impl Write,
+) -> Result<(), png::EncodingError> {
+    let mut encoder = png::Encoder::new(output, width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_source_srgb(png::SrgbRenderingIntent::Perceptual);
     let mut writer = encoder.write_header()?;
     {
         let mut stream = writer.stream_writer()?;
-        for row in image.rows() {
-            stream.write_all(row)?;
+        for row in pixels.chunks_exact(padded_row_bytes(width)) {
+            stream.write_all(&row[..width as usize * 4])?;
         }
         stream.finish()?;
     }
     writer.finish()
 }
 
-fn save_png(image: &Image, path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn save_png(
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+    path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut output = BufWriter::new(fs::File::create(path)?);
-    write_png(image, &mut output)?;
+    write_png(width, height, pixels, &mut output)?;
     output.flush()?;
     Ok(())
+}
+
+fn padded_row_bytes(width: u32) -> usize {
+    let row_bytes = width as usize * 4;
+    row_bytes.div_ceil(256) * 256
 }
 
 fn main() -> ExitCode {
@@ -164,6 +184,24 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_exactly_three_finite_components() {
+        assert_eq!(parse_vec3(" -1, 2.5, 3e-2 "), Ok([-1.0, 2.5, 0.03]));
+        for input in [
+            "",
+            "1,2",
+            "1,2,3,4",
+            "1,,3",
+            "1,2,",
+            "x,2,3",
+            "NaN,2,3",
+            "1,inf,3",
+            "1,2,1e100",
+        ] {
+            assert!(parse_vec3(input).is_err(), "{input}");
+        }
+    }
 
     #[test]
     fn png_output_errors_are_returned() {
@@ -187,6 +225,6 @@ mod tests {
                 },
             )
             .unwrap();
-        assert!(write_png(&image, BrokenWriter).is_err());
+        assert!(write_png(1, 1, &image, BrokenWriter).is_err());
     }
 }
