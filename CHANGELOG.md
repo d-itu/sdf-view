@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- Replace `--checkerboard` with `--background transparent|checkerboard|rgb(r,g,b)`.
+The default is `transparent` in interactive and offline modes. RGB components
+are sRGB integers in 0..=255. Windows, screenshots, and offline PNGs share the
+selected background; transparent windows require compositor support.
+- Add `RenderOptions::background` and `Background::{Transparent, Checkerboard, Rgb}`.
+Use `..Default::default()` in existing struct literals for the transparent default.
+`ScenePipeline::update(queue, options)` now reads background from options;
+replace the former preview flag and `update_preview` calls with this method.
+Window integrations can use `update_surface(queue, options, premultiplied)`
+when their surface requires premultiplied alpha.
+- Stabilize orbit pole clamping, normalize drag sensitivity across display scales,
+and handle drag ownership, cursor confinement, and focus loss explicitly.
+
+- Add `--interactive` desktop previews with orbit, pan, zoom, camera reset.
+- Add reusable `ScenePipeline` GPU drawing with scene uniforms; interactive
+  camera changes do not recompile shaders or read pixels back to the CPU.
+  Expose `Renderer::from_adapter`, `device`, and `queue` for surface integration.
+- Add Wayland/X11 runtime libraries to the Nix development environment.
+
 - Add optional four-ray supersampling with CLI `--antialiasing 4` and library
   `Antialiasing::X4`. The default is one ray (`1` / `Antialiasing::X1`).
   Edge coverage uses straight alpha; image dimensions and readback layout stay

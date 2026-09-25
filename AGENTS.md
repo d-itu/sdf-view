@@ -18,6 +18,9 @@ and API migration notes in `CHANGELOG.md`.
 - `src/lib.rs`: synchronous, native, headless `Renderer` and mapped GPU readback.
 - `cli/`: separate `sdf-view-cli` workspace package providing the `sdf-view` binary.
   Only this package depends on PNG and clap; the library has no encoding dependencies.
+- `src/pipeline.rs`: reusable `ScenePipeline`, GLSL compilation, uniform updates,
+  and direct GPU drawing. `src/shaders/scene.glsl` defines the std140 scene layout.
+- `cli/src/interactive.rs`: winit window, surface lifecycle, reload, screenshots,
 - `src/scene.rs`: camera and directional light configuration and validation.
 - `src/shaders/`: fullscreen triangle and fragment-shader sphere tracing.
 - `cli/src/main.rs`: clap arguments, scene validation, PNG encoding, file handling,
@@ -51,12 +54,15 @@ fn main() -> Result<(), sdf_view::Error> {
 ```
 
 `Renderer::render` returns a mapped `wgpu::BufferView` containing top-to-bottom
-sRGB RGBA8 pixels. Its row stride is the width times four rounded up to
+sRGB RGBA8 pixels. `Renderer::render_with_pipeline` renders through an existing
+`ScenePipeline`, allowing interactive screenshots to reuse the compiled SDF
+pipeline. Its row stride is the width times four rounded up to
 `wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`; callers can consume each row directly
 without a packed image allocation. The mapped view owns the readback buffer and
 remains valid after the renderer is dropped.
 
-PNG encoding and output errors belong to the CLI. It streams mapped rows into the
+PNG encoding and output errors belong to the CLI. The CLI also owns winit and
+window event handling; the library does not depend on winit. It streams mapped rows into the
 encoder without allocating a packed image. The library has no PNG dependency.
 `futures::executor::block_on` and a oneshot channel bridge GPU mapping callbacks;
 explicit device polling is still required.
@@ -71,6 +77,30 @@ GLSL features. Shader and pipeline validation failures return `Error::Gpu`.
 scene settings without a GPU; `render()` also checks device size limits.
 Invalid camera or lighting settings return `Error::Settings`. The CLI validates
 these before initializing the GPU and exits with code 2.
+
+### Interactive rendering
+
+`ScenePipeline::new(device, sdf, format)` compiles a reusable pipeline targeting an
+sRGB texture format. `update(queue, options, preview)` uploads a fixed-size scene
+uniform without recompilation, including the 1/4-ray sampling mode. `draw` records
+commands into a caller-owned encoder and texture view. Use the same device and
+queue for all resources; submit a draw before uploading parameters for another
+view. The preview flag composites onto an opaque checkerboard in linear space.
+Naga reflection rejects user resource bindings, including unused declarations.
+
+The CLI selects a surface-compatible adapter and constructs the renderer with
+`Renderer::from_adapter`; `device()` and `queue()` allow direct GPU drawing.
+Window redraws reuse the pipeline without CPU readback. Reload compiles a candidate
+pipeline before replacing the current pipeline and source. Screenshots use the
+same renderer's synchronous `render` path with preview disabled, preserving PNG
+transparency. Reload and screenshot failures leave the preview running.
+
+The event loop waits when idle, suspends rendering for zero-sized/occluded windows,
+and handles outdated and lost surfaces. Initial dimensions are physical pixels;
+resize events update the surface and scene resolution. Camera controls preserve
+the configured target/up axis, validate candidate settings, constrain orbit poles,
+and clamp zoom distance to 0.01–10000 world units. Window interaction currently
+targets desktop Linux and Windows; mobile lifecycle handling is not implemented.
 
 ### Rendering conventions
 
@@ -96,13 +126,29 @@ these before initializing the GPU and exits with code 2.
 
 ## Development
 
+The CLI package's `interactive` feature is enabled by default. It gates the
+`interactive` module and the CLI's direct futures, glam,
+wgpu, and winit dependencies. The library still requires wgpu and futures for
+headless rendering; disabling the feature does not remove the GPU requirement.
+
+```sh
+cargo build --locked -p sdf-view-cli --no-default-features
+cargo test --locked -p sdf-view-cli --no-default-features
+cargo build --locked -p sdf-view-cli --no-default-features --features interactive
+```
+
+Without the feature, clap omits `--interactive`/`-i` and always requires `-o`.
+Background argument tests run with either configuration. Build CI validates the
+offline configuration before rebuilding the default CLI; release assets retain
+interactive support.
+
 The workspace defaults to both library and CLI packages. Use
 `cargo build -p sdf-view` to build only the library, without PNG or clap. Keep versions in
 `Cargo.toml`, `cli/Cargo.toml`, and `Cargo.lock` synchronized for releases.
 
 The Nix flake supports `x86_64-linux` and `aarch64-linux` and provides Rust,
 Cargo, rustfmt, Clippy, rust-analyzer, standard library sources, and the Vulkan
-loader. Versions are pinned by `flake.lock` and `Cargo.lock`.
+loader plus Wayland/X11 runtime libraries. Versions are pinned by `flake.lock` and `Cargo.lock`.
 
 ```sh
 nix develop path:.
@@ -117,7 +163,7 @@ cargo run -- examples/sphere.glsl -o target/sphere.png
 
 The explicit `path:.` works with untracked flake files. No rustup installation
 or global toolchain configuration is needed. The development environment exports
-`LD_LIBRARY_PATH` with the pinned Vulkan loader directly, so tools importing Nix
+`LD_LIBRARY_PATH` with the Vulkan loader and window runtime libraries directly, so tools importing Nix
 environment variables do not need to execute a `shellHook` to make rendering work.
 After changing the flake, re-enter `nix develop path:.` or let direnv reload before
 running `cargo run`. The loader uses the system's graphics drivers; the flake does
@@ -131,13 +177,18 @@ Full `cargo test` requires a working graphics adapter and fails rather than
 silently skipping rendering tests. Tests cover sphere silhouettes, aspect ratio,
 readback padding, image orientation, PNG round trips, shader error recovery,
 camera transforms, lighting, antialiasing coverage and straight-alpha colors,
-CLI output, and invalid parameters.
+CLI output, and invalid parameters. GPU tests also check pipeline reuse, scene
+uniform changes, failed reload recovery, and opaque preview composition. Window
+input/resize/screenshot behavior requires a desktop or an isolated X11 server for
+end-to-end verification; normal CI does not open windows.
 
 GPU-independent checks:
 
 ```sh
 cargo test --locked --lib
 cargo test --locked --test cli help_version_and_invalid_arguments -- --exact
+cargo test --locked -p sdf-view-cli --bin sdf-view interactive::
+cargo test --locked -p sdf-view-cli --bin sdf-view tests::interactive_arguments -- --exact
 cargo test --locked --test scene validates_scene_without_a_device -- --exact
 ```
 

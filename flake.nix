@@ -32,8 +32,17 @@
 
             # Export this as part of the environment, including for tools that
             # import Nix variables without executing shellHook.
-            # wgpu loads Vulkan dynamically rather than linking it at build time.
-            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [ pkgs.vulkan-loader ];
+            # wgpu and winit load graphics and window libraries dynamically.
+            LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
+              pkgs.vulkan-loader
+              pkgs.wayland
+              pkgs.libxkbcommon
+              pkgs.libX11
+              pkgs.libXcursor
+              pkgs.libXi
+              pkgs.libXrandr
+              pkgs.libxcb
+            ];
           };
         }
       );

@@ -11,4 +11,4 @@ default-members = [".", "cli"]
 [dependencies]
 futures = { version = "0.3.34", default-features = false, features = ["executor", "std"] }
 thiserror = "2.0.21"
-wgpu = { version = "30.0.1", features = ["glsl"] }
+wgpu = { version = "30.0.1", features = ["glsl", "naga-ir"] }

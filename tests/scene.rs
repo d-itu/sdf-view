@@ -67,10 +67,7 @@ fn validates_scene_without_a_device() {
         invalid.push(RenderOptions { light, ..defaults });
     }
     for options in invalid {
-        assert!(
-            matches!(options.validate(), Err(Error::Settings(_))),
-            "{options:?}"
-        );
+        std::assert_matches!(options.validate(), Err(_), "{options:?}");
     }
 }
 

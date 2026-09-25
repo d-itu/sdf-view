@@ -152,7 +152,7 @@ fn renders_png_and_reports_runtime_errors() {
             reader.info().srgb,
             Some(png::SrgbRenderingIntent::Perceptual)
         );
-        let mut renderer = sdf_view::Renderer::new().unwrap();
+        let renderer = sdf_view::Renderer::new().unwrap();
         let mapped = renderer
             .render(
                 source,

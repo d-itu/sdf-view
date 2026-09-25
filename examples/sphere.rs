@@ -1,7 +1,7 @@
 use sdf_view::{Antialiasing, RenderOptions, Renderer};
 
 fn main() -> Result<(), sdf_view::Error> {
-    let mut renderer = Renderer::new()?;
+    let renderer = Renderer::new()?;
     let options = RenderOptions {
         antialiasing: Antialiasing::X4,
         ..Default::default()

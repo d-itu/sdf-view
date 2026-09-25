@@ -55,4 +55,9 @@ void main() {
         ? vec4(total.rgb / total.a,
             total.a / float(sdf_view_sample_grid * sdf_view_sample_grid))
         : vec4(0.0);
+    if (sdf_view_scene.resolution.w > 0.5) {
+        float checker = mod(floor(gl_FragCoord.x / 16.0) + floor(gl_FragCoord.y / 16.0), 2.0);
+        vec3 background = vec3(mix(0.12, 0.22, checker));
+        sdf_view_color = vec4(mix(background, sdf_view_color.rgb, sdf_view_color.a), 1.0);
+    }
 }

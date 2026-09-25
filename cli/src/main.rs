@@ -5,6 +5,9 @@ use std::{
     process::ExitCode,
 };
 
+#[cfg(feature = "interactive")]
+mod interactive;
+
 use clap::Parser;
 use sdf_view::{Antialiasing, Camera, DirectionalLight, RenderOptions, Renderer};
 
@@ -18,7 +21,14 @@ struct Args {
 
     /// Destination PNG file (overwrites an existing file)
     #[arg(short, long, value_name = "PNG")]
-    output: PathBuf,
+    #[cfg_attr(feature = "interactive", arg(required_unless_present = "interactive"))]
+    #[cfg_attr(not(feature = "interactive"), arg(required = true))]
+    output: Option<PathBuf>,
+
+    #[cfg(feature = "interactive")]
+    /// Open an interactive preview window
+    #[arg(short, long)]
+    interactive: bool,
 
     /// Image width in pixels
     #[arg(long, default_value_t = 512, value_parser = clap::value_parser!(u32).range(1..))]
@@ -118,26 +128,39 @@ impl Args {
 fn run(args: Args) -> Result<(), String> {
     let source = fs::read_to_string(&args.input)
         .map_err(|error| format!("could not read '{}': {error}", args.input.display()))?;
-    if let (Ok(input), Ok(output)) = (
-        fs::canonicalize(&args.input),
-        fs::canonicalize(&args.output),
-    ) && input == output
-    {
-        return Err("input and output must be different files".into());
+    if let Some(output) = &args.output {
+        check_output(&args.input, output)?;
     }
-    let mut renderer =
+    #[cfg(feature = "interactive")]
+    if args.interactive {
+        return interactive::run(args, source);
+    }
+    let output = args
+        .output
+        .as_ref()
+        .expect("clap requires output in batch mode");
+    let renderer =
         Renderer::new().map_err(|error| format!("could not initialize renderer: {error}"))?;
     let pixels = renderer
         .render(&source, args.render_options())
         .map_err(|error| format!("could not render '{}': {error}", args.input.display()))?;
-    save_png(args.width, args.height, &pixels, &args.output)
-        .map_err(|error| format!("could not write '{}': {error}", args.output.display()))?;
+    save_png(args.width, args.height, &pixels, output)
+        .map_err(|error| format!("could not write '{}': {error}", output.display()))?;
     eprintln!(
         "Saved {} ({}x{})",
-        args.output.display(),
+        output.display(),
         args.width,
         args.height
     );
+    Ok(())
+}
+
+fn check_output(input: &Path, output: &Path) -> Result<(), String> {
+    if let (Ok(input), Ok(output)) = (fs::canonicalize(input), fs::canonicalize(output))
+        && input == output
+    {
+        return Err("input and output must be different files".into());
+    }
     Ok(())
 }
 
@@ -199,6 +222,51 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(feature = "interactive")]
+    fn interactive_arguments() {
+        let args = Args::try_parse_from(["sdf-view", "sphere.glsl", "--interactive"]).unwrap();
+        assert!(args.interactive);
+        assert!(args.output.is_none());
+        let args = Args::try_parse_from([
+            "sdf-view",
+            "sphere.glsl",
+            "--interactive",
+            "-o",
+            "snapshot.png",
+            "--antialiasing",
+            "4",
+        ])
+        .unwrap();
+        assert_eq!(args.output.as_deref(), Some(Path::new("snapshot.png")));
+        assert_eq!(args.antialiasing, Antialiasing::X4);
+        assert!(Args::try_parse_from(["sdf-view", "sphere.glsl"]).is_err());
+        assert!(
+            Args::try_parse_from([
+                "sdf-view",
+                "sphere.glsl",
+                "--interactive",
+                "--antialiasing",
+                "2"
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    #[cfg(not(feature = "interactive"))]
+    fn offline_arguments_require_output_and_reject_interactive() {
+        assert!(Args::try_parse_from(["sdf-view", "sphere.glsl"]).is_err());
+        assert!(
+            Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png", "--interactive"])
+                .is_err()
+        );
+        assert!(Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png", "-i"]).is_err());
+        let args = Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png"]).unwrap();
+        assert_eq!(args.output.as_deref(), Some(Path::new("out.png")));
+        assert_eq!(args.background, Background::Transparent);
+    }
+
+    #[test]
     fn parses_exactly_three_finite_components() {
         assert_eq!(parse_vec3(" -1, 2.5, 3e-2 "), Ok([-1.0, 2.5, 0.03]));
         for input in [
@@ -227,7 +295,7 @@ mod tests {
                 Ok(())
             }
         }
-        let mut renderer = Renderer::new().expect("a working graphics adapter is required");
+        let renderer = Renderer::new().expect("a working graphics adapter is required");
         let image = renderer
             .render(
                 "float sdf(vec3 p) { return length(p) - 1.0; }",

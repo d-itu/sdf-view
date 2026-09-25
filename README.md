@@ -1,6 +1,6 @@
 # sdf-view
 
-Render a GLSL signed distance function to a PNG, without a window.
+Render a GLSL signed distance function to a PNG or explore it in an interactive window.
 A compatible graphics driver is required.
 
 ## Usage
@@ -25,14 +25,53 @@ sdf-view --version
 ```
 
 To run from source, use `cargo run --` in place of `sdf-view`.
-The output path is required, its parent directory must exist, and existing
-files are overwritten. The rendered surface is blue with a transparent background.
+The output path is required for PNG rendering; in interactive mode it is optional
+and enables screenshots. Its parent directory must exist, and existing files are
+overwritten. The rendered surface is blue with a transparent background.
+
+The CLI package enables its `interactive` Cargo feature by default. For an
+installation that only renders PNG files:
+
+```sh
+cargo install --path cli --no-default-features
+```
+
+That build omits `--interactive` and requires `-o` for every render. Background,
+camera, lighting, and antialiasing options remain available.
+
+## Interactive preview
+
+```sh
+sdf-view sphere.glsl --interactive
+sdf-view sphere.glsl --interactive --antialiasing 4 -o snapshot.png
+```
+
+A desktop session is required (Wayland or X11 on Linux, or Windows). Camera,
+lighting, sampling, and width/height options set the initial view. Width and height
+are physical pixels; resizing the window updates the image dimensions. Transparent
+areas appear over a checkerboard in the preview; saved PNGs retain transparency.
+
+| Input | Action |
+| --- | --- |
+| Left drag | Orbit around the camera target |
+| Right drag | Pan the camera and target |
+| Mouse wheel | Zoom toward or away from the target |
+| `Home` | Restore the initial camera |
+| `1` / `4` | Switch rays per pixel |
+| `R` | Reload the GLSL file; keep the last valid scene on errors |
+| `S` | Save the current view to `-o`, overwriting the file |
+| `Esc` or close window | Exit |
+
+Reloading is manual. Screenshots use the current window dimensions and settings.
+Errors are reported on stderr. The preview redraws after changes and waits for
+input while idle.
 
 ## Options
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `-o, --output <PNG>` | Output file | Required |
+| `-o, --output <PNG>` | Output or screenshot file | Required unless interactive |
+| `--interactive` | Open a preview window | Off |
 | `--width <PIXELS>` | Image width | `512` |
 | `--height <PIXELS>` | Image height | `512` |
 | `--antialiasing <SAMPLES>` | Rays per pixel: 1 disables antialiasing, 4 uses a 2×2 grid | `1` |

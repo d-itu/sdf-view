@@ -81,6 +81,8 @@ jobs:
       - name: Test optimized build without a GPU
         run: |
           cargo test --release --locked --target "${{ matrix.target }}" --lib
+          cargo test --release --locked --target "${{ matrix.target }}" -p sdf-view-cli --bin sdf-view interactive::
+          cargo test --release --locked --target "${{ matrix.target }}" -p sdf-view-cli --bin sdf-view tests::interactive_arguments -- --exact
           cargo test --release --locked --target "${{ matrix.target }}" --test cli help_version_and_invalid_arguments -- --exact
           cargo test --release --locked --target "${{ matrix.target }}" --test scene validates_scene_without_a_device -- --exact
 

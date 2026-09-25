@@ -6,9 +6,10 @@
 //! missed rays produce transparent black pixels. This blocking API targets
 //! native applications and requires a working wgpu graphics adapter.
 
-use std::{borrow::Cow, fmt};
-
 use futures::{channel::oneshot, executor::block_on};
+
+mod pipeline;
+pub use pipeline::ScenePipeline;
 
 mod scene;
 pub use scene::{Camera, DirectionalLight};
@@ -16,24 +17,22 @@ pub use scene::{Camera, DirectionalLight};
 /// Errors from initialization or rendering.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("no compatible graphics adapter: {0}")]
+    #[error(transparent)]
     Adapter(#[from] wgpu::RequestAdapterError),
-    #[error("could not create graphics device: {0}")]
+    #[error(transparent)]
     Device(#[from] wgpu::RequestDeviceError),
     #[error("invalid image dimensions: {0}")]
     Dimensions(&'static str),
     #[error("invalid render settings: {0}")]
     Settings(&'static str),
-    #[error("shader or GPU validation failed: {0}")]
+    #[error(transparent)]
     Gpu(#[from] wgpu::Error),
-    #[error("GPU polling failed: {0}")]
+    #[error(transparent)]
     Poll(#[from] wgpu::PollError),
-    #[error("GPU readback failed: {0}")]
+    #[error(transparent)]
     Map(#[from] wgpu::BufferAsyncError),
-    #[error("GPU mapped range failed: {0}")]
+    #[error(transparent)]
     MapRange(#[from] wgpu::MapRangeError),
-    #[error("GPU readback callback was dropped")]
-    ReadbackDisconnected,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -108,19 +107,32 @@ impl Renderer {
                     ..Default::default()
                 })
                 .await?;
-            let adapter_info = adapter.get_info();
-            let (device, queue) = adapter
-                .request_device(&wgpu::DeviceDescriptor {
-                    label: Some("sdf-view"),
-                    ..Default::default()
-                })
-                .await?;
-            Ok(Self {
-                device,
-                queue,
-                adapter_info,
-            })
+            Ok(adapter)
         })
+        .and_then(|adapter| Self::from_adapter(&adapter))
+    }
+
+    /// Create a renderer from an adapter selected for a window surface.
+    pub fn from_adapter(adapter: &wgpu::Adapter) -> Result<Self, Error> {
+        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("sdf-view"),
+            ..Default::default()
+        }))?;
+        Ok(Self {
+            device,
+            queue,
+            adapter_info: adapter.get_info(),
+        })
+    }
+
+    /// Device used by this renderer, for compatible GPU pipelines and surfaces.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+
+    /// Queue used by this renderer.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
     }
 
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
@@ -142,12 +154,34 @@ impl Renderer {
     /// pixel bytes followed by padding to a multiple of 256 bytes
     /// ([`wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`]). The view length is the padded
     /// row stride times `options.height`. No CPU pixel copy is performed.
-    pub fn render(&mut self, sdf: &str, options: RenderOptions) -> Result<wgpu::BufferView, Error> {
+    pub fn render(&self, sdf: &str, options: RenderOptions) -> Result<wgpu::BufferView, Error> {
         options.validate()?;
+        self.with_error_scope(|| {
+            let pipeline =
+                ScenePipeline::new(&self.device, sdf, wgpu::TextureFormat::Rgba8UnormSrgb)?;
+            self.render_inner(&pipeline, options)
+        })
+    }
+
+    /// Render with an already compiled pipeline.
+    ///
+    /// The pipeline must have been created with this renderer's device and target
+    /// `wgpu::TextureFormat::Rgba8UnormSrgb`. This is useful when several images
+    /// use the same SDF, such as interactive screenshots.
+    pub fn render_with_pipeline(
+        &self,
+        pipeline: &ScenePipeline,
+        options: RenderOptions,
+    ) -> Result<wgpu::BufferView, Error> {
+        options.validate()?;
+        self.with_error_scope(|| self.render_inner(pipeline, options))
+    }
+
+    fn with_error_scope<T>(&self, render: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
         let validation = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let memory = self.device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal = self.device.push_error_scope(wgpu::ErrorFilter::Internal);
-        let result = self.render_inner(sdf, options);
+        let result = render();
         let internal_error = block_on(internal.pop());
         let memory_error = block_on(memory.pop());
         let validation_error = block_on(validation.pop());
@@ -157,105 +191,13 @@ impl Renderer {
         result
     }
 
-    fn render_inner(&self, sdf: &str, options: RenderOptions) -> Result<wgpu::BufferView, Error> {
-        fn vec3(v: [f32; 3]) -> impl fmt::Display {
-            fmt::from_fn(move |f| write!(f, "vec3({:?}, {:?}, {:?})", v[0], v[1], v[2]))
-        }
+    fn render_inner(
+        &self,
+        pipeline: &ScenePipeline,
+        options: RenderOptions,
+    ) -> Result<wgpu::BufferView, Error> {
         let layout = ReadbackLayout::new([options.width, options.height], &self.device.limits())?;
-        let basis = options.camera.basis()?;
-        let light_direction = options.light.normalized_direction()?;
-        let source = format!(
-            "#version 450\n\
-            const int sdf_view_sample_grid = {};\n\
-            const vec2 sdf_view_resolution = vec2({}.0, {}.0);\n\
-            const vec3 sdf_view_origin = {};\n\
-            const vec3 sdf_view_forward = {};\n\
-            const vec3 sdf_view_right = {};\n\
-            const vec3 sdf_view_up = {};\n\
-            const float sdf_view_fov_scale = {:?};\n\
-            const vec3 sdf_view_light_direction = {};\n\
-            const vec3 sdf_view_light_color = {};\n\
-            const float sdf_view_light_intensity = {:?};\n\
-            const float sdf_view_ambient = {:?};\n\
-            #line 1 1\n{}\n#line 1 0\n{}",
-            match options.antialiasing {
-                Antialiasing::X1 => 1,
-                Antialiasing::X4 => 2,
-            },
-            options.width,
-            options.height,
-            vec3(options.camera.position),
-            vec3(basis.forward),
-            vec3(basis.right),
-            vec3(basis.up),
-            (options.camera.vertical_fov_degrees.to_radians() * 0.5).tan(),
-            vec3(light_direction),
-            vec3(options.light.color),
-            options.light.intensity,
-            options.light.ambient,
-            sdf,
-            include_str!("shaders/fragment.glsl")
-        );
-        // Resolve shader errors before attempting to build or submit a pipeline.
-        let shader_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let fragment = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("SDF fragment shader"),
-                source: wgpu::ShaderSource::Glsl {
-                    shader: Cow::Owned(source),
-                    stage: wgpu::naga::ShaderStage::Fragment,
-                    defines: &[],
-                },
-            });
-        if let Some(error) = block_on(shader_scope.pop()) {
-            return Err(Error::Gpu(error));
-        }
-        let vertex = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("fullscreen triangle"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/vertex.wgsl").into()),
-            });
-        let pipeline_scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
-        // An explicit empty layout rejects user-defined resource bindings.
-        let pipeline_layout = self
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("SDF pipeline layout"),
-                bind_group_layouts: &[],
-                immediate_size: 0,
-            });
-        let pipeline = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("SDF pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &vertex,
-                    entry_point: Some("main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
-                },
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &fragment,
-                    entry_point: Some("main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            });
-        if let Some(error) = block_on(pipeline_scope.pop()) {
-            return Err(Error::Gpu(error));
-        }
+        pipeline.update(&self.queue, options, false)?;
         let size = wgpu::Extent3d {
             width: options.width,
             height: options.height,
@@ -280,23 +222,7 @@ impl Renderer {
         });
         let view = texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SDF render pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
-            pass.set_pipeline(&pipeline);
-            pass.draw(0..3, 0..1);
-        }
+        pipeline.draw(&mut encoder, &view);
         encoder.copy_texture_to_buffer(
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
@@ -318,7 +244,7 @@ impl Renderer {
         // Drive GPU completion and mapping callbacks before waiting on the future.
         // The futures executor does not poll the wgpu device itself.
         self.device.poll(wgpu::PollType::wait_indefinitely())?;
-        block_on(receiver).map_err(|_| Error::ReadbackDisconnected)??;
+        block_on(receiver).unwrap()?;
         let mapped = slice.get_mapped_range()?;
         Ok(mapped)
     }
