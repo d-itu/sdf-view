@@ -19,6 +19,7 @@ Names beginning with `sdf_view_` are reserved.
 ```sh
 sdf-view sphere.glsl -o sphere.png
 sdf-view sphere.glsl -o sphere.png --width 1024 --height 768
+sdf-view sphere.glsl -o sphere.png --antialiasing 4
 sdf-view --help
 sdf-view --version
 ```
@@ -34,6 +35,7 @@ files are overwritten. The rendered surface is blue with a transparent backgroun
 | `-o, --output <PNG>` | Output file | Required |
 | `--width <PIXELS>` | Image width | `512` |
 | `--height <PIXELS>` | Image height | `512` |
+| `--antialiasing <SAMPLES>` | Rays per pixel: 1 disables antialiasing, 4 uses a 2×2 grid | `1` |
 | `--camera-position X,Y,Z` | Camera position | `0,0,3` |
 | `--camera-target X,Y,Z` | Point to look at | `0,0,0` |
 | `--camera-up X,Y,Z` | Camera up direction | `0,1,0` |
@@ -42,6 +44,10 @@ files are overwritten. The rendered surface is blue with a transparent backgroun
 | `--light-color R,G,B` | Linear RGB light color | `1,1,1` |
 | `--light-intensity <VALUE>` | Directional light strength | `0.85` |
 | `--ambient <VALUE>` | White ambient light strength | `0.15` |
+
+Use `--antialiasing 4` to smooth silhouettes with partial transparency. It traces
+four rays per pixel; rendering time depends on the scene and GPU. Output dimensions
+remain unchanged.
 
 Vectors use comma-separated components in right-handed world coordinates.
 The camera position and target must differ; its up direction must be nonzero

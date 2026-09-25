@@ -1,8 +1,11 @@
-use sdf_view::{RenderOptions, Renderer};
+use sdf_view::{Antialiasing, RenderOptions, Renderer};
 
 fn main() -> Result<(), sdf_view::Error> {
     let mut renderer = Renderer::new()?;
-    let options = RenderOptions::default();
+    let options = RenderOptions {
+        antialiasing: Antialiasing::X4,
+        ..Default::default()
+    };
     let pixels = renderer.render(include_str!("sphere.glsl"), options)?;
     println!("Rendered {}x{} RGBA8 pixels", options.width, options.height);
     let row_bytes = options.width as usize * 4;

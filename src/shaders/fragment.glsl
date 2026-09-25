@@ -11,14 +11,13 @@ vec3 sdf_view_normal(vec3 p) {
     return magnitude > 0.000001 ? gradient / magnitude : vec3(0.0, 0.0, 1.0);
 }
 
-void main() {
-    vec2 screen = (2.0 * gl_FragCoord.xy - sdf_view_resolution) / sdf_view_resolution.y;
+vec4 sdf_view_trace(vec2 pixel) {
+    vec2 screen = (2.0 * pixel - sdf_view_resolution) / sdf_view_resolution.y;
     screen.y = -screen.y;
     vec3 direction = normalize(sdf_view_forward + sdf_view_fov_scale *
         (screen.x * sdf_view_right + screen.y * sdf_view_up));
     vec3 origin = sdf_view_origin;
     float travel = 0.0;
-    sdf_view_color = vec4(0.0);
     for (int step = 0; step < 256; ++step) {
         vec3 p = origin + travel * direction;
         float distance = sdf(p);
@@ -31,8 +30,7 @@ void main() {
             vec3 albedo = vec3(0.25, 0.55, 0.85);
             vec3 illumination = vec3(sdf_view_ambient) +
                 sdf_view_light_color * sdf_view_light_intensity * diffuse;
-            sdf_view_color = vec4(albedo * illumination, 1.0);
-            break;
+            return vec4(albedo * illumination, 1.0);
         }
         // Absolute distance also supports cameras inside a closed surface.
         travel += abs(distance);
@@ -40,4 +38,21 @@ void main() {
             break;
         }
     }
+    return vec4(0.0);
+}
+
+void main() {
+    vec4 total = vec4(0.0);
+    for (int y = 0; y < sdf_view_sample_grid; ++y) {
+        for (int x = 0; x < sdf_view_sample_grid; ++x) {
+            vec2 offset = (vec2(float(x), float(y)) + 0.5) /
+                float(sdf_view_sample_grid) - 0.5;
+            total += sdf_view_trace(gl_FragCoord.xy + offset);
+        }
+    }
+    // Store straight alpha: average hit colors independently of coverage.
+    sdf_view_color = total.a > 0.0
+        ? vec4(total.rgb / total.a,
+            total.a / float(sdf_view_sample_grid * sdf_view_sample_grid))
+        : vec4(0.0);
 }

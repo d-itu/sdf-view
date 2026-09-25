@@ -36,13 +36,28 @@ pub enum Error {
     ReadbackDisconnected,
 }
 
-/// Image dimensions, camera, and lighting for a render.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid render settings: {0}")]
+pub struct SettingsError(&'static str);
+
+/// Number of subpixel rays traced per output pixel.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Antialiasing {
+    /// One ray through the pixel center (no antialiasing).
+    #[default]
+    X1,
+    /// Four rays on a uniform 2-by-2 subpixel grid.
+    X4,
+}
+
+/// Image dimensions, camera, lighting, and antialiasing for a render.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderOptions {
     pub width: u32,
     pub height: u32,
     pub camera: Camera,
     pub light: DirectionalLight,
+    pub antialiasing: Antialiasing,
 }
 
 impl Default for RenderOptions {
@@ -52,6 +67,7 @@ impl Default for RenderOptions {
             height: 512,
             camera: Camera::default(),
             light: DirectionalLight::default(),
+            antialiasing: Antialiasing::default(),
         }
     }
 }
@@ -150,6 +166,7 @@ impl Renderer {
         let light_direction = options.light.normalized_direction()?;
         let source = format!(
             "#version 450\n\
+            const int sdf_view_sample_grid = {};\n\
             const vec2 sdf_view_resolution = vec2({}.0, {}.0);\n\
             const vec3 sdf_view_origin = {};\n\
             const vec3 sdf_view_forward = {};\n\
@@ -161,6 +178,10 @@ impl Renderer {
             const float sdf_view_light_intensity = {:?};\n\
             const float sdf_view_ambient = {:?};\n\
             #line 1 1\n{}\n#line 1 0\n{}",
+            match options.antialiasing {
+                Antialiasing::X1 => 1,
+                Antialiasing::X4 => 2,
+            },
             options.width,
             options.height,
             vec3(options.camera.position),

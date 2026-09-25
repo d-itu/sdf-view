@@ -17,10 +17,20 @@ fn help_version_and_invalid_arguments() {
     let help = cli(&["--help"]);
     assert!(help.status.success());
     let text = String::from_utf8(help.stdout).unwrap();
-    for flag in ["<INPUT>", "--output", "--width", "--height"] {
+    for flag in [
+        "<INPUT>",
+        "--output",
+        "--width",
+        "--height",
+        "--antialiasing",
+    ] {
         assert!(text.contains(flag), "missing {flag}");
     }
     for extra in [
+        vec!["--antialiasing", "0"],
+        vec!["--antialiasing", "2"],
+        vec!["--antialiasing", "16"],
+        vec!["--antialiasing", "x4"],
         vec!["--camera-position", "1,2"],
         vec!["--camera-position", "NaN,0,3"],
         vec!["--camera-target", "0,0,3"],
@@ -107,8 +117,15 @@ fn renders_png_and_reports_runtime_errors() {
         source
     );
 
-    for dimensions in [vec![], vec!["--width", "129", "--height", "97"]] {
-        let mut args = vec!["sphere.glsl", "-o", "image.png"];
+    for (dimensions, samples, antialiasing) in [
+        (vec![], "1", sdf_view::Antialiasing::X1),
+        (
+            vec!["--width", "129", "--height", "97"],
+            "4",
+            sdf_view::Antialiasing::X4,
+        ),
+    ] {
+        let mut args = vec!["sphere.glsl", "-o", "image.png", "--antialiasing", samples];
         args.extend_from_slice(&dimensions);
         let output = workspace.run(&args);
         assert!(
@@ -142,6 +159,7 @@ fn renders_png_and_reports_runtime_errors() {
                 sdf_view::RenderOptions {
                     width: expected.0,
                     height: expected.1,
+                    antialiasing,
                     ..Default::default()
                 },
             )

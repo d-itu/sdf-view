@@ -25,13 +25,14 @@ and API migration notes in `CHANGELOG.md`.
 - `examples/sphere.rs`: library example; `examples/sphere.glsl`: unit sphere input.
 
 ```rust
-use sdf_view::{Camera, DirectionalLight, RenderOptions, Renderer};
+use sdf_view::{Antialiasing, Camera, DirectionalLight, RenderOptions, Renderer};
 
 fn main() -> Result<(), sdf_view::Error> {
     let mut renderer = Renderer::new()?;
     let options = RenderOptions {
         width: 512,
         height: 512,
+        antialiasing: Antialiasing::X4,
         camera: Camera {
             position: [3.0, 2.0, 4.0],
             vertical_fov_degrees: 50.0,
@@ -65,7 +66,7 @@ Helper functions are supported, but user snippets must omit `#version`, `main`,
 and resource bindings. Reserve the `sdf_view_` prefix. Naga does not implement all
 GLSL features. Shader and pipeline validation failures return `Error::Gpu`.
 
-`RenderOptions` includes `width`, `height`, `camera`, and `light`. Use
+`RenderOptions` includes `width`, `height`, `camera`, `light`, and `antialiasing`. Use
 `..Default::default()` when overriding only some fields. `validate()` checks
 scene settings without a GPU; `render()` also checks device size limits.
 Invalid camera or lighting settings return `Error::Settings`. The CLI validates
@@ -86,7 +87,12 @@ these before initializing the GPU and exits with code 2.
 - Illumination is `albedo * (ambient + color * intensity * max(dot(normal, direction), 0))`.
 - Sphere tracing uses at most 256 steps, a 100-unit travel limit, and a
   0.001-unit hit tolerance. The surface is blue and the background transparent.
-- Antialiasing, shadows, and specular lighting are not implemented.
+- Antialiasing defaults to `Antialiasing::X1` (one pixel-center ray). `X4` traces
+  a 2-by-2 grid at offsets of +/-0.25 pixels. Hit colors are averaged in linear
+  space before sRGB encoding; alpha is the hit fraction. Output uses straight
+  (non-premultiplied) alpha, with transparent black for entirely missed pixels.
+  CLI `--antialiasing` accepts only `1` or `4`. Dimensions and row layout are unchanged.
+- Shadows and specular lighting are not implemented.
 
 ## Development
 
@@ -124,7 +130,8 @@ Software Vulkan adapters such as Mesa lavapipe work when provided by the system.
 Full `cargo test` requires a working graphics adapter and fails rather than
 silently skipping rendering tests. Tests cover sphere silhouettes, aspect ratio,
 readback padding, image orientation, PNG round trips, shader error recovery,
-camera transforms, lighting, CLI output, and invalid parameters.
+camera transforms, lighting, antialiasing coverage and straight-alpha colors,
+CLI output, and invalid parameters.
 
 GPU-independent checks:
 

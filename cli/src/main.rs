@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::Parser;
-use sdf_view::{Camera, DirectionalLight, RenderOptions, Renderer};
+use sdf_view::{Antialiasing, Camera, DirectionalLight, RenderOptions, Renderer};
 
 /// Render a GLSL signed distance function to a PNG image.
 #[derive(Debug, Parser)]
@@ -27,6 +27,10 @@ struct Args {
     /// Image height in pixels
     #[arg(long, default_value_t = 512, value_parser = clap::value_parser!(u32).range(1..))]
     height: u32,
+
+    /// Rays per pixel: 1 disables antialiasing, 4 uses a 2-by-2 grid
+    #[arg(long, default_value = "1", value_parser = parse_antialiasing, value_name = "1|4")]
+    antialiasing: Antialiasing,
 
     /// Camera position in world coordinates
     #[arg(long, default_value = "0,0,3", value_parser = parse_vec3, value_name = "X,Y,Z", allow_hyphen_values = true)]
@@ -61,6 +65,14 @@ struct Args {
     ambient: f32,
 }
 
+fn parse_antialiasing(value: &str) -> Result<Antialiasing, &'static str> {
+    match value {
+        "1" => Ok(Antialiasing::X1),
+        "4" => Ok(Antialiasing::X4),
+        _ => Err("expected 1 or 4 rays per pixel"),
+    }
+}
+
 fn parse_vec3(value: &str) -> Result<[f32; 3], &'static str> {
     let mut parts = value.split(',');
     let mut vector = [0.0_f32; 3];
@@ -86,6 +98,7 @@ impl Args {
         RenderOptions {
             width: self.width,
             height: self.height,
+            antialiasing: self.antialiasing,
             camera: Camera {
                 position: self.camera_position,
                 target: self.camera_target,

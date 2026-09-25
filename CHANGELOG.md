@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add optional four-ray supersampling with CLI `--antialiasing 4` and library
+  `Antialiasing::X4`. The default is one ray (`1` / `Antialiasing::X1`).
+  Edge coverage uses straight alpha; image dimensions and readback layout stay
+  unchanged. Four-ray sampling increases rendering work.
+- API migration: `RenderOptions` gains an `antialiasing` field. Add it to complete
+  struct literals, or use `..Default::default()` to retain single-ray rendering.
+
 - Publish only Linux and Windows release archives, without a SHA256 checksum file.
 - Skip automatic builds for documentation-only changes and tag pushes. Manual
   builds remain available; version tags still trigger release builds.

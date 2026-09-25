@@ -26,6 +26,80 @@ fn packed(view: &[u8], width: u32, height: u32) -> Vec<u8> {
         .collect()
 }
 
+#[test]
+fn antialiasing_preserves_straight_alpha() {
+    use sdf_view::{Antialiasing, DirectionalLight};
+
+    let mut renderer = Renderer::new().expect("a working graphics adapter is required");
+    let source = include_str!("../examples/sphere.glsl");
+    let options = RenderOptions {
+        width: 129,
+        height: 97,
+        light: DirectionalLight {
+            intensity: 0.0,
+            ambient: 1.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let default = render(&mut renderer, source, options);
+    let single = render(
+        &mut renderer,
+        source,
+        RenderOptions {
+            antialiasing: Antialiasing::X1,
+            ..options
+        },
+    );
+    assert_eq!(default.pixels, single.pixels);
+    assert!(
+        single
+            .pixels
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|p| p[3] == 0 || p[3] == 255)
+    );
+
+    let reference = single
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .find(|p| p[3] == 255)
+        .unwrap();
+    let multi = render(
+        &mut renderer,
+        source,
+        RenderOptions {
+            antialiasing: Antialiasing::X4,
+            ..options
+        },
+    );
+    let mut coverage = [false; 5];
+    for pixel in multi.pixels.as_chunks::<4>().0 {
+        let index = match pixel[3] {
+            0 => 0,
+            64 => 1,
+            127 | 128 => 2,
+            191 => 3,
+            255 => 4,
+            alpha => panic!("unexpected four-sample coverage: {alpha}"),
+        };
+        coverage[index] = true;
+        if index == 0 {
+            assert_eq!(pixel, &[0, 0, 0, 0]);
+        } else {
+            // Constant lighting must not darken partially covered pixels.
+            assert_eq!(&pixel[..3], &reference[..3]);
+        }
+    }
+    assert!(coverage.into_iter().all(|present| present));
+    let center = ((options.height / 2 * options.width + options.width / 2) * 4) as usize;
+    assert_eq!(multi.pixels[center + 3], 255);
+    assert_eq!(&multi.pixels[..4], &[0, 0, 0, 0]);
+}
+
 // This is an actual graphics integration test. A missing adapter is a failure,
 // not a silent skip; software Vulkan implementations can run it in CI.
 #[test]
