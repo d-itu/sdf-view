@@ -141,8 +141,10 @@ It uses Rust stable and `--locked` to build and test the CLI with the dev profil
 - Linux: Ubuntu 24.04, `x86_64-unknown-linux-gnu`.
 - Windows: Windows Server 2025, `x86_64-pc-windows-msvc`.
 
-Normal CI does not package or upload binaries. It runs GPU-independent tests
-and CLI help/version smoke tests, without configuring a graphics adapter.
+Normal CI does not package or upload binaries. Before building, it checks Rust
+formatting with `cargo fmt --all -- --check` and TOML formatting with
+`tombi format --check`. It then runs GPU-independent tests and CLI help/version
+smoke tests, without configuring a graphics adapter.
 
 `.github/workflows/release.yml` runs on pushed `v*` tags. Tags must exactly match
 `v` plus the version in `Cargo.toml`, for example `v0.1.0`. The CLI package version
