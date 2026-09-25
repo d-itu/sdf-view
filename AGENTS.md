@@ -136,7 +136,11 @@ cargo test --locked --test scene validates_scene_without_a_device -- --exact
 
 ## CI and releases
 
-`.github/workflows/build.yml` runs on pushes, pull requests, and manual requests.
+`.github/workflows/build.yml` runs on branch pushes, pull requests, and manual
+requests. Automatic builds skip changes limited to Markdown files, `docs/`,
+root `LICENSE*` files, and `.gitignore`. Changes that also include source or build
+configuration still trigger builds. Tag pushes use the release workflow only;
+manual builds remain available regardless of changed paths.
 It uses Rust stable and `--locked` to build and test the CLI with the dev profile:
 
 - Linux: Ubuntu 24.04, `x86_64-unknown-linux-gnu`.
@@ -162,7 +166,6 @@ these GitHub Release assets:
 
 - `sdf-view-x86_64-unknown-linux-gnu.tar.gz`
 - `sdf-view-x86_64-pc-windows-msvc.zip`
-- `SHA256SUMS`
 
 Notes are generated automatically; tags such as `v0.2.0-rc.1` create prereleases.
 Assets are uploaded to a draft before publication. Reruns may resume a draft but

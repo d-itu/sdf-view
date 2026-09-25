@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Publish only Linux and Windows release archives, without a SHA256 checksum file.
+- Skip automatic builds for documentation-only changes and tag pushes. Manual
+  builds remain available; version tags still trigger release builds.
+
 ## v0.1.1
 
 - Export the Vulkan loader path directly from the Nix development environment so

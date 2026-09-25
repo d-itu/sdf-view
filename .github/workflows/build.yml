@@ -2,7 +2,18 @@ name: Build CLI
 
 on:
   push:
+    branches: ['**']
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.gitignore'
   pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE*'
+      - '.gitignore'
   workflow_dispatch:
 
 permissions:

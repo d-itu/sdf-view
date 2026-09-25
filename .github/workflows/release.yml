@@ -122,12 +122,11 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Verify assets and generate checksums
+      - name: Verify release archives
         working-directory: dist
         run: |
           test -s sdf-view-x86_64-unknown-linux-gnu.tar.gz
           test -s sdf-view-x86_64-pc-windows-msvc.zip
-          sha256sum sdf-view-x86_64-unknown-linux-gnu.tar.gz sdf-view-x86_64-pc-windows-msvc.zip > SHA256SUMS
 
       - name: Publish release
         env:
@@ -155,6 +154,5 @@ jobs:
           fi
           gh release upload "$RELEASE_TAG" \
             dist/sdf-view-x86_64-unknown-linux-gnu.tar.gz \
-            dist/sdf-view-x86_64-pc-windows-msvc.zip \
-            dist/SHA256SUMS --clobber
+            dist/sdf-view-x86_64-pc-windows-msvc.zip --clobber
           gh release edit "$RELEASE_TAG" --draft=false
