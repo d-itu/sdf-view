@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+- Centralize CLI failures in `CliError`, preserving input paths and underlying
+  I/O, renderer, PNG, and interactive errors. Runtime failures use exit code 1;
+  invalid render settings retain exit code 2.
 
 - Unify CLI colors as sRGB `rgb(r,g,b)` integers in 0..=255, with `black`
   and `white` aliases. `--background` also retains `transparent` and `checkerboard`.

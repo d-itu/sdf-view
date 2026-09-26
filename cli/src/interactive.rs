@@ -1,4 +1,4 @@
-use std::{error::Error, fs, result, sync::Arc};
+use std::{fs, result, sync::Arc};
 
 use futures::executor::block_on;
 use glam::{Quat, Vec3};
@@ -12,9 +12,9 @@ use winit::{
     window::{CursorGrabMode, Window, WindowId},
 };
 
-use crate::Args;
+use crate::{Args, Error};
 
-type Result<T> = result::Result<T, Box<dyn Error>>;
+type Result<T> = result::Result<T, Error>;
 
 struct Preview {
     window: Arc<Window>,
@@ -42,19 +42,20 @@ impl Preview {
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             compatible_surface: Some(&surface),
             ..Default::default()
-        }))?;
+        }))
+        .map_err(sdf_view::Error::Adapter)?;
         let renderer = Renderer::from_adapter(&adapter)?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .ok_or("surface has no supported configuration")?;
+            .ok_or(Error::NoSupportedConfiguration)?;
         config.format = surface
             .get_capabilities(&adapter)
             .formats
             .into_iter()
             .find(|format| format.is_srgb())
-            .ok_or("surface has no sRGB format")?;
-        if matches!(args.background, sdf_view::Background::Transparent) {
+            .ok_or(Error::NoSupportedFormat)?;
+        if let sdf_view::Background::Transparent = args.background {
             let modes = surface.get_capabilities(&adapter).alpha_modes;
             if let Some(mode) = [
                 wgpu::CompositeAlphaMode::PostMultiplied,
@@ -86,10 +87,6 @@ impl Preview {
     fn resize(&mut self, size: PhysicalSize<u32>) -> Result<()> {
         if size.width == 0 || size.height == 0 {
             return Ok(());
-        }
-        let limit = self.renderer.device().limits().max_texture_dimension_2d;
-        if size.width > limit || size.height > limit {
-            return Err("window exceeds device texture limits".into());
         }
         self.config.width = size.width;
         self.config.height = size.height;
@@ -127,7 +124,7 @@ impl Preview {
             }
             wgpu::CurrentSurfaceTexture::Occluded => return Ok(()),
             wgpu::CurrentSurfaceTexture::Validation => {
-                return Err("surface validation failed".into());
+                return Err(Error::SurfaceValidation);
             }
         };
         self.pipeline.update_surface(
@@ -160,7 +157,7 @@ struct App {
     preview: Option<Preview>,
     drag: Drag,
     confined: bool,
-    error: Option<String>,
+    error: Option<Error>,
 }
 
 impl App {
@@ -207,12 +204,12 @@ impl App {
     }
 
     fn screenshot(&mut self) -> Result<()> {
-        let output = self
-            .args
-            .output
-            .as_ref()
-            .ok_or("specify -o <PNG> to enable screenshots")?;
-        crate::check_output(&self.args.input, output)?;
+        let output = if let Some(output) = self.args.output.as_ref() {
+            output
+        } else {
+            tracing::warn!("specify -o <PNG> to enable screenshots");
+            return Ok(());
+        };
         if let Some(preview) = &mut self.preview {
             let mut options = self.args.render_options();
             options.camera = self.orbit.camera;
@@ -239,7 +236,7 @@ impl ApplicationHandler for App {
                 self.title();
             }
             Err(error) => {
-                self.error = Some(error.to_string());
+                self.error = Some(error);
                 events.exit();
             }
         }
@@ -255,7 +252,7 @@ impl ApplicationHandler for App {
                 if let Some(preview) = &mut self.preview
                     && let Err(error) = preview.resize(size)
                 {
-                    self.error = Some(error.to_string());
+                    self.error = Some(error);
                     events.exit();
                 }
             }
@@ -265,7 +262,7 @@ impl ApplicationHandler for App {
                 if let Some(preview) = &mut self.preview
                     && let Err(error) = preview.draw(options)
                 {
-                    self.error = Some(error.to_string());
+                    self.error = Some(error);
                     events.exit();
                 }
             }
@@ -351,8 +348,8 @@ impl ApplicationHandler for App {
     }
 }
 
-pub fn run(args: Args, source: String) -> result::Result<(), String> {
-    let events = EventLoop::new().map_err(|e| e.to_string())?;
+pub fn run(args: Args, source: String) -> result::Result<(), Error> {
+    let events = EventLoop::new()?;
     events.set_control_flow(ControlFlow::Wait);
     let orbit = Orbit::new(args.render_options().camera);
     let mut app = App {
@@ -367,9 +364,9 @@ pub fn run(args: Args, source: String) -> result::Result<(), String> {
     tracing::info!(
         "Left drag: orbit; right drag: pan; wheel: zoom; Home: reset; A: samples; R: reload; S: save; Esc: exit"
     );
-    events.run_app(&mut app).map_err(|e| e.to_string())?;
+    events.run_app(&mut app)?;
     match app.error {
-        Some(error) => Err(error),
+        Some(error) => Err(error)?,
         None => Ok(()),
     }
 }

@@ -21,10 +21,8 @@ pub enum Error {
     Adapter(#[from] wgpu::RequestAdapterError),
     #[error(transparent)]
     Device(#[from] wgpu::RequestDeviceError),
-    #[error("invalid image dimensions: {0}")]
-    Dimensions(&'static str),
-    #[error("invalid render settings: {0}")]
-    Settings(&'static str),
+    #[error(transparent)]
+    Settings(#[from] SettingsError),
     #[error(transparent)]
     Gpu(#[from] wgpu::Error),
     #[error(transparent)]
@@ -92,9 +90,9 @@ impl Default for RenderOptions {
 impl RenderOptions {
     /// Validate dimensions and scene settings without initializing a GPU.
     /// Device-specific size limits are checked separately by `Renderer::render`.
-    pub fn validate(&self) -> Result<(), Error> {
+    pub fn validate(&self) -> Result<(), SettingsError> {
         if self.width == 0 || self.height == 0 {
-            return Err(Error::Dimensions("width and height must be nonzero"));
+            return Err(SettingsError("width and height must be nonzero"));
         }
         if !self
             .object_color
@@ -286,22 +284,20 @@ struct ReadbackLayout {
 impl ReadbackLayout {
     fn new([width, height]: [u32; 2]) -> Result<Self, SettingsError> {
         if width == 0 || height == 0 {
-            return Err(Error::Dimensions("width and height must be nonzero"));
+            return Err(SettingsError("width and height must be nonzero"));
         }
         let row_bytes = width
             .checked_mul(4)
-            .ok_or(Error::Dimensions("row size overflow"))?;
+            .ok_or(SettingsError("row size overflow"))?;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_row_bytes = row_bytes
             .checked_add(alignment - 1)
-            .ok_or(Error::Dimensions("padded row size overflow"))?
+            .ok_or(SettingsError("padded row size overflow"))?
             / alignment
             * alignment;
         let buffer_size = u64::from(padded_row_bytes) * u64::from(height);
         if usize::try_from(buffer_size).is_err() {
-            return Err(Error::Dimensions(
-                "image exceeds the addressable readback size",
-            ));
+            return Err(SettingsError("image exceeds the addressable readback size"));
         }
         Ok(Self {
             padded_row_bytes,
@@ -337,10 +333,7 @@ mod tests {
     #[test]
     fn invalid_dimensions() {
         for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1)] {
-            std::assert_matches!(
-                ReadbackLayout::new([width, height]),
-                Err(Error::Dimensions(_))
-            );
+            std::assert_matches!(ReadbackLayout::new([width, height]), Err(SettingsError(_)));
         }
     }
 }

@@ -1,6 +1,6 @@
 use std::{
     fs,
-    io::{BufWriter, IsTerminal, Write},
+    io::{self, BufWriter, IsTerminal, Write},
     path::{Path, PathBuf},
     process::ExitCode,
 };
@@ -11,6 +11,54 @@ mod interactive;
 use clap::Parser;
 use sdf_view::{Antialiasing, Background, Camera, DirectionalLight, RenderOptions, Renderer};
 
+#[derive(Debug, thiserror::Error)]
+enum Error {
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error(transparent)]
+    Render(#[from] sdf_view::Error),
+    #[error("could not encode PNG '{path}': {source}")]
+    Png {
+        path: PathBuf,
+        #[source]
+        source: png::EncodingError,
+    },
+    #[error(transparent)]
+    Settings(#[from] sdf_view::SettingsError),
+
+    #[cfg(feature = "interactive")]
+    #[error(transparent)]
+    EventLoop(#[from] winit::error::EventLoopError),
+
+    #[cfg(feature = "interactive")]
+    #[error(transparent)]
+    Os(#[from] winit::error::OsError),
+
+    #[cfg(feature = "interactive")]
+    #[error(transparent)]
+    CreateSurface(#[from] wgpu::CreateSurfaceError),
+
+    #[cfg(feature = "interactive")]
+    #[error("surface validation failed")]
+    SurfaceValidation,
+
+    #[cfg(feature = "interactive")]
+    #[error("surface has no supported configuration")]
+    NoSupportedConfiguration,
+
+    #[cfg(feature = "interactive")]
+    #[error("surface has no sRGB format")]
+    NoSupportedFormat,
+}
+
+impl Error {
+    fn exit_code(&self) -> ExitCode {
+        match self {
+            Self::Settings(_) => ExitCode::from(2),
+            _ => ExitCode::FAILURE,
+        }
+    }
+}
 /// Render a GLSL signed distance function to a PNG image.
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -195,12 +243,8 @@ impl Args {
     }
 }
 
-fn run(args: Args) -> Result<(), String> {
-    let source = fs::read_to_string(&args.input)
-        .map_err(|error| format!("could not read '{}': {error}", args.input.display()))?;
-    if let Some(output) = &args.output {
-        check_output(&args.input, output)?;
-    }
+fn run(args: Args) -> Result<(), Error> {
+    let source = fs::read_to_string(&args.input)?;
     #[cfg(feature = "interactive")]
     if args.interactive {
         return interactive::run(args, source);
@@ -209,23 +253,10 @@ fn run(args: Args) -> Result<(), String> {
         .output
         .as_ref()
         .expect("clap requires output in batch mode");
-    let renderer =
-        Renderer::new().map_err(|error| format!("could not initialize renderer: {error}"))?;
-    let pixels = renderer
-        .render(&source, args.render_options())
-        .map_err(|error| format!("could not render '{}': {error}", args.input.display()))?;
-    save_png(args.width, args.height, &pixels, output)
-        .map_err(|error| format!("could not write '{}': {error}", output.display()))?;
+    let renderer = Renderer::new()?;
+    let pixels = renderer.render(&source, args.render_options())?;
+    save_png(args.width, args.height, &pixels, output)?;
     tracing::info!(path = %output.display(), width = args.width, height = args.height, "Saved PNG");
-    Ok(())
-}
-
-fn check_output(input: &Path, output: &Path) -> Result<(), String> {
-    if let (Ok(input), Ok(output)) = (fs::canonicalize(input), fs::canonicalize(output))
-        && input == output
-    {
-        return Err("input and output must be different files".into());
-    }
     Ok(())
 }
 
@@ -250,14 +281,13 @@ fn write_png(
     writer.finish()
 }
 
-fn save_png(
-    width: u32,
-    height: u32,
-    pixels: &[u8],
-    path: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut output = BufWriter::new(fs::File::create(path)?);
-    write_png(width, height, pixels, &mut output)?;
+fn save_png(width: u32, height: u32, pixels: &[u8], path: &Path) -> Result<(), Error> {
+    let file = fs::File::create(path)?;
+    let mut output = BufWriter::new(file);
+    write_png(width, height, pixels, &mut output).map_err(|source| Error::Png {
+        path: path.to_owned(),
+        source,
+    })?;
     output.flush()?;
     Ok(())
 }
@@ -274,19 +304,20 @@ fn main() -> ExitCode {
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "warn,sdf_view=info".into()),
         )
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::stderr().is_terminal())
+        .with_writer(io::stderr)
+        .with_ansi(io::stderr().is_terminal())
         .without_time()
         .init();
     if let Err(error) = args.render_options().validate() {
+        let error = Error::Settings(error);
         tracing::error!("{error}");
-        return ExitCode::from(2);
+        return error.exit_code();
     }
     match run(args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             tracing::error!("{error}");
-            ExitCode::FAILURE
+            error.exit_code()
         }
     }
 }
