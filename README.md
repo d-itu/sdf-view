@@ -77,7 +77,7 @@ sdf-view sphere.glsl --interactive --background transparent
 | Right drag | Pan the camera and target |
 | Mouse wheel | Zoom toward or away from the target |
 | `Home` | Restore the initial camera |
-| `1` / `4` | Switch rays per pixel |
+| `A` | Toggle between 1 and 4 rays per pixel |
 | `R` | Reload the GLSL file; keep the last valid scene on errors |
 | `Esc` or close window | Exit |
 
