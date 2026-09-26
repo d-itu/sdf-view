@@ -1,6 +1,6 @@
 [package]
 name = "sdf-view-cli"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 
 [[bin]]
@@ -13,7 +13,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 futures = { version = "0.3", optional = true }
 glam = { version = "0.32", optional = true }
 png = "0.18.1"
-sdf-view = { path = "..", version = "0.1.1", default-features = false }
+sdf-view = { path = "..", version = "0.2.0", default-features = false }
 thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

@@ -1,111 +1,55 @@
 # Changelog
 
-## Unreleased
+## v0.2.0
 
-- Validate readback size arithmetic before GPU initialization. Invalid dimensions
-  return CLI exit code 2, including settings errors wrapped by renderer errors.
+- Add desktop previews with orbit, pan, zoom, reset, manual shader reload, and
+  sampling controls. Omitting `-o` opens a preview; `-o` renders offline. `-i` and
+  `-o` are mutually exclusive; interactive screenshots are unavailable.
+- Add four-ray antialiasing, transparent/checkerboard/RGB backgrounds, and object
+  color. Default object color is sRGB `(137,196,237)`; coverage uses straight alpha.
+- Add reusable `ScenePipeline` drawing and renderer device/queue access for window
+  integration, without shader recompilation or CPU readback on camera changes.
+- Validate readback arithmetic before GPU initialization; invalid settings return
+  exit code 2, including errors wrapped by the renderer.
+- Add stderr tracing controlled by `RUST_LOG`, optional `interactive` and `gpu-test`
+  features, and Wayland/X11 libraries in the Nix environment. Both features default
+  on; disabling GPU tests does not remove the rendering GPU requirement.
+- Publish Linux/Windows archives without checksum files; skip automatic build CI
+  for documentation-only changes.
 
-- Temporarily remove interactive screenshots and the `S` shortcut. `-i` and `-o`
-  are now mutually exclusive; use offline rendering to save PNGs.
-- Open an interactive preview when `-o` is omitted. With `-o`, render offline.
-  Builds without `interactive` still require `-o`.
-- Clamp finite object and light color components to `[0, 1]` before uploading
-  uniforms. Nonfinite components return the shared `SettingsError::NonFiniteFloat`.
+### Migration from v0.1.1
 
-- Make `sdf_view::SettingsError` an enum with distinct dimension, camera, and
-  lighting variants. Callers can match variants instead of parsing diagnostics;
-  existing display messages and `Error::Settings` conversion are preserved.
-  Move library and CLI error definitions into their respective `error.rs` modules.
-
-- Centralize CLI failures in `Error`, preserving underlying
-  I/O, renderer, PNG, and interactive errors. Runtime failures use exit code 1;
-  invalid render settings retain exit code 2.
-
-- Unify CLI colors as sRGB `rgb(r,g,b)` integers in 0..=255, with `black`
-  and `white` aliases. `--background` also retains `transparent` and `checkerboard`.
-  `--light-color` no longer accepts linear float triples: migrate `1,0.9,0.8`
-  to approximately `rgb(255,243,231)` after sRGB encoding.
-- Add `--object-color` (default `rgb(137,196,237)`) and linear RGB
-  `RenderOptions::object_color`. Use `..Default::default()` for existing struct
-  literals. The default blue is rounded to sRGB bytes, slightly changing its
-  previous linear `[0.25,0.55,0.85]` value. Colors apply to PNGs and previews,
-  and pipeline updates upload albedo without recompiling shaders.
-
-
-- Add a default-enabled `gpu-test` feature to the library and CLI. Disabling it
-  excludes GPU-dependent tests while preserving all rendering functionality.
-  Build and release CI now run workspace tests without per-test name filters;
-  normal local `cargo test` still includes GPU rendering tests.
-
-- Route CLI runtime diagnostics through `tracing`, with structured PNG path and
-  dimensions, severity levels, and `RUST_LOG` filtering. Logs go to stderr with
-  terminal-aware colors; the default filter is `warn,sdf_view=info`.
-
-- Replace `--checkerboard` with `--background transparent|checkerboard|rgb(r,g,b)`.
-The default is `transparent` in interactive and offline modes. RGB components
-are sRGB integers in 0..=255. Windows and offline PNGs share the
-selected background; transparent windows require compositor support.
-- Add `RenderOptions::background` and `Background::{Transparent, Checkerboard, Rgb}`.
-Use `..Default::default()` in existing struct literals for the transparent default.
-`ScenePipeline::update(queue, options)` now reads background from options;
-replace the former preview flag and `update_preview` calls with this method.
-Window integrations can use `update_surface(queue, options, premultiplied)`
-when their surface requires premultiplied alpha.
-- Stabilize orbit pole clamping, normalize drag sensitivity across display scales,
-and handle drag ownership, cursor confinement, and focus loss explicitly.
-
-- Add `--interactive` desktop previews with orbit, pan, zoom, camera reset.
-- Add reusable `ScenePipeline` GPU drawing with scene uniforms; interactive
-  camera changes do not recompile shaders or read pixels back to the CPU.
-  Expose `Renderer::from_adapter`, `device`, and `queue` for surface integration.
-- Add Wayland/X11 runtime libraries to the Nix development environment.
-
-- Add optional four-ray supersampling with CLI `--antialiasing 4` and library
-  `Antialiasing::X4`. The default is one ray (`1` / `Antialiasing::X1`).
-  Edge coverage uses straight alpha; image dimensions and readback layout stay
-  unchanged. Four-ray sampling increases rendering work.
-- API migration: `RenderOptions` gains an `antialiasing` field. Add it to complete
-  struct literals, or use `..Default::default()` to retain single-ray rendering.
-
-- Publish only Linux and Windows release archives, without a SHA256 checksum file.
-- Skip automatic builds for documentation-only changes and tag pushes. Manual
-  builds remain available; version tags still trigger release builds.
+- `RenderOptions` adds `antialiasing`, `background`, and `object_color` fields.
+  Use `..Default::default()` when overriding only some settings.
+- `Error::Settings` now carries the `SettingsError` enum instead of a string;
+  dimension errors use it too, replacing `Error::Dimensions`. Match variants
+  instead of parsing messages. `RenderOptions::validate()` returns `SettingsError`
+  directly. The `Error::ReadbackDisconnected` variant was removed.
+- Library object/light colors remain linear RGB; finite components are clamped to
+  `[0, 1]`, and nonfinite components return `SettingsError::NonFiniteFloat`.
+- CLI colors use sRGB `rgb(r,g,b)` integers in 0–255, `black`, or `white`.
+  Replace `--light-color 1,0.9,0.8` with approximately `'rgb(255,243,231)'`.
+  Replace `--checkerboard` with `--background checkerboard` if using a development
+  build that exposed the old flag. PNG-only builds require `-o` and omit `-i`.
+- For integrations using earlier development APIs, replace `update_preview` with
+  `ScenePipeline::update(queue, options)` or `update_surface` for premultiplied
+  window alpha. Reused headless pipelines must target `Rgba8UnormSrgb`.
 
 ## v0.1.1
 
-- Export the Vulkan loader path directly from the Nix development environment so
-  `cargo run` works when tools import environment variables without `shellHook`.
-- Validate image dimensions and readback limits before creating GPU resources,
-  returning `Error::Dimensions` consistently for oversized images.
-- Remove heap allocations from CLI vector parsing and temporary GLSL vector
-  formatting. Add Rust and TOML formatting checks to CI.
-- Split the CLI into the `sdf-view-cli` workspace package, keeping the binary name
-  `sdf-view`. PNG encoding and clap dependencies now belong only to the CLI.
-- Return mapped GPU readback memory directly, avoiding CPU image copies. The CLI
-  encodes PNG rows directly from the mapped view.
+- Split the CLI into `sdf-view-cli`; keep the binary name `sdf-view` and PNG/clap
+  dependencies out of the library. Stream mapped GPU rows directly into PNGs.
+- Validate dimensions before GPU resource creation, reduce temporary allocations,
+  fix Nix runtime library exports, and add Rust/TOML formatting checks.
 
-Library API migration from v0.1.0: `Renderer::render` now returns
-`wgpu::BufferView` instead of `Image`. Obtain dimensions from `RenderOptions` and
-read `width * 4` bytes per row with a stride rounded up to 256 bytes. `Image` and
-its pixel access and PNG output methods are removed, along with `Error::Png` and
-`Error::Io`. PNG encoding is the caller's responsibility. CLI arguments and PNG
-output behavior remain compatible with v0.1.0.
+Migration from v0.1.0: `Renderer::render` returns `wgpu::BufferView` instead of
+`Image`. Read `width * 4` bytes per row with stride rounded up to 256 bytes.
+`Image`, its helpers, `Error::Png`, and `Error::Io` were removed; callers handle
+encoding and output. CLI usage remains compatible.
 
 ## v0.1.0
 
-Initial release of sdf-view:
-
-- Render a GLSL `float sdf(vec3 p)` function to a transparent RGBA PNG without
-  opening a window, using wgpu.
-- Configure output dimensions, perspective camera position/target/up/FOV,
-  directional light direction/color/intensity, and ambient light through the CLI.
-- Reuse the native Rust renderer library for pixel readback and PNG encoding.
-- Receive input, shader, scene validation, and file output diagnostics with
-  nonzero CLI exit codes.
-- Build optimized Linux and Windows x86-64 release archives with SHA256 checksums
-  through the tagged-release workflow.
-
-Known limitations: a compatible graphics driver is required; only Naga's GLSL
-subset is supported; surface material is fixed; antialiasing, shadows, and
-specular lighting are not implemented. Linux release binaries are built on
-Ubuntu 24.04 and are not statically linked portable binaries.
+Initial headless GLSL-to-PNG library and CLI with configurable camera and diffuse/
+ambient lighting, transparent output, and Linux/Windows archives with checksums.
+Rendering requires a graphics driver and Naga-compatible GLSL. Linux binaries
+use Ubuntu 24.04 glibc rather than static linking.
