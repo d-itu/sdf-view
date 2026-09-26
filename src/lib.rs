@@ -166,7 +166,7 @@ impl Renderer {
     ///
     /// The pipeline must have been created with this renderer's device and target
     /// `wgpu::TextureFormat::Rgba8UnormSrgb`. This is useful when several images
-    /// use the same SDF, such as interactive screenshots.
+    /// use the same SDF with different scene settings.
     pub fn render_with_pipeline(
         &self,
         pipeline: &ScenePipeline,

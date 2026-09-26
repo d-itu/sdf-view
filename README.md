@@ -26,8 +26,8 @@ sdf-view --version
 
 To run from source, use `cargo run --` in place of `sdf-view`.
 Omitting `-o` opens an interactive preview. Specifying `-o` renders a PNG;
-combine it with `-i` to enable screenshots in the preview. The output parent
-directory must exist, and existing files are
+`-i` and `-o` cannot be combined. Interactive screenshots are currently unavailable.
+The output parent directory must exist, and existing files are
 overwritten. The rendered surface is blue with a transparent background by default.
 
 The CLI package enables its `interactive` Cargo feature by default. For an
@@ -50,7 +50,7 @@ color codes; help and version output retain the standard CLI format.
 
 ```sh
 sdf-view sphere.glsl
-sdf-view sphere.glsl --interactive --background checkerboard --antialiasing 4 -o snapshot.png
+sdf-view sphere.glsl --interactive --background checkerboard --antialiasing 4
 ```
 
 A desktop session is required (Wayland or X11 on Linux, or Windows). Camera,
@@ -58,7 +58,7 @@ lighting, sampling, and width/height options set the initial view. Width and hei
 are physical pixels; resizing the window updates the image dimensions. Transparent
 areas remain transparent by default. `--background` accepts `transparent`,
 `checkerboard`, or `rgb(r,g,b)` with integer sRGB components from 0 to 255.
-The selected background applies equally to the window, screenshots, and offline PNGs.
+The selected background applies equally to the window and offline PNGs.
 All color arguments (`--background`, `--light-color`, and `--object-color`) accept
 `rgb(r,g,b)` with sRGB integer components in 0–255, or `black` and `white`.
 Quote `rgb(...)` values in the shell. Lighting is computed in linear space.
@@ -79,10 +79,9 @@ sdf-view sphere.glsl --interactive --background transparent
 | `Home` | Restore the initial camera |
 | `1` / `4` | Switch rays per pixel |
 | `R` | Reload the GLSL file; keep the last valid scene on errors |
-| `S` | Save the current view to `-o`, overwriting the file |
 | `Esc` or close window | Exit |
 
-Reloading is manual. Screenshots use the current window dimensions and settings.
+Reloading is manual.
 Errors are reported on stderr. The preview redraws after changes and waits for
 input while idle.
 
@@ -90,8 +89,8 @@ input while idle.
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `-o, --output <PNG>` | Output or screenshot file | Omit to open preview |
-| `-i, --interactive` | Open a preview window even with `-o` | On when `-o` is omitted |
+| `-o, --output <PNG>` | Output PNG file | Omit to open preview |
+| `-i, --interactive` | Open a preview window; conflicts with `-o` | On when `-o` is omitted |
 | `--background <BACKGROUND>` | `transparent`, `checkerboard`, or `rgb(r,g,b)` (0–255) | `transparent` |
 | `--width <PIXELS>` | Image width | `512` |
 | `--height <PIXELS>` | Image height | `512` |

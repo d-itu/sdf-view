@@ -202,27 +202,6 @@ impl App {
         }
         Ok(())
     }
-
-    fn screenshot(&mut self) -> Result<()> {
-        let output = if let Some(output) = self.args.output.as_ref() {
-            output
-        } else {
-            tracing::warn!("specify -o <PNG> to enable screenshots");
-            return Ok(());
-        };
-        if let Some(preview) = &mut self.preview {
-            let mut options = self.args.render_options();
-            options.camera = self.orbit.camera;
-            options.width = preview.config.width;
-            options.height = preview.config.height;
-            let pixels = preview
-                .renderer
-                .render_with_pipeline(&preview.pipeline, options)?;
-            crate::save_png(options.width, options.height, &pixels, output)?;
-            tracing::info!(path = %output.display(), width = options.width, height = options.height, "Saved PNG");
-        }
-        Ok(())
-    }
 }
 
 impl ApplicationHandler for App {
@@ -335,7 +314,6 @@ impl ApplicationHandler for App {
                         Ok(())
                     }
                     Key::Character("r" | "R") => self.reload(),
-                    Key::Character("s" | "S") => self.screenshot(),
                     _ => Ok(()),
                 };
                 if let Err(error) = result {
@@ -362,7 +340,7 @@ pub fn run(args: Args, source: String) -> result::Result<(), Error> {
         error: None,
     };
     tracing::info!(
-        "Left drag: orbit; right drag: pan; wheel: zoom; Home: reset; A: samples; R: reload; S: save; Esc: exit"
+        "Left drag: orbit; right drag: pan; wheel: zoom; Home: reset; A: samples; R: reload; Esc: exit"
     );
     events.run_app(&mut app)?;
     match app.error {

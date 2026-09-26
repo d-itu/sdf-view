@@ -2,8 +2,10 @@
 
 ## Unreleased
 
-- Open an interactive preview when `-o` is omitted. With `-o`, render offline
-  unless `-i` is also specified. Builds without `interactive` still require `-o`.
+- Temporarily remove interactive screenshots and the `S` shortcut. `-i` and `-o`
+  are now mutually exclusive; use offline rendering to save PNGs.
+- Open an interactive preview when `-o` is omitted. With `-o`, render offline.
+  Builds without `interactive` still require `-o`.
 - Clamp finite object and light color components to `[0, 1]` before uploading
   uniforms. Nonfinite components return the shared `SettingsError::NonFiniteFloat`.
 
@@ -23,8 +25,8 @@
 - Add `--object-color` (default `rgb(137,196,237)`) and linear RGB
   `RenderOptions::object_color`. Use `..Default::default()` for existing struct
   literals. The default blue is rounded to sRGB bytes, slightly changing its
-  previous linear `[0.25,0.55,0.85]` value. Colors apply to PNGs, previews, and
-  screenshots, and pipeline updates upload albedo without recompiling shaders.
+  previous linear `[0.25,0.55,0.85]` value. Colors apply to PNGs and previews,
+  and pipeline updates upload albedo without recompiling shaders.
 
 
 - Add a default-enabled `gpu-test` feature to the library and CLI. Disabling it
@@ -38,7 +40,7 @@
 
 - Replace `--checkerboard` with `--background transparent|checkerboard|rgb(r,g,b)`.
 The default is `transparent` in interactive and offline modes. RGB components
-are sRGB integers in 0..=255. Windows, screenshots, and offline PNGs share the
+are sRGB integers in 0..=255. Windows and offline PNGs share the
 selected background; transparent windows require compositor support.
 - Add `RenderOptions::background` and `Background::{Transparent, Checkerboard, Rgb}`.
 Use `..Default::default()` in existing struct literals for the transparent default.

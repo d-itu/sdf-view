@@ -20,7 +20,7 @@ and API migration notes in `CHANGELOG.md`.
   Only this package depends on PNG and clap; the library has no encoding dependencies.
 - `src/pipeline.rs`: reusable `ScenePipeline`, GLSL compilation, uniform updates,
   and direct GPU drawing. `src/shaders/scene.glsl` defines the std140 scene layout.
-- `cli/src/interactive.rs`: winit window, surface lifecycle, reload, screenshots,
+- `cli/src/interactive.rs`: winit window, surface lifecycle, reload, camera controls.
 - `src/scene.rs`: camera and directional light configuration and validation.
 - `src/shaders/`: fullscreen triangle and fragment-shader sphere tracing.
 - `cli/src/main.rs`: clap arguments, scene validation, PNG encoding, file handling,
@@ -56,7 +56,7 @@ fn main() -> Result<(), sdf_view::Error> {
 
 `Renderer::render` returns a mapped `wgpu::BufferView` containing top-to-bottom
 sRGB RGBA8 pixels. `Renderer::render_with_pipeline` renders through an existing
-`ScenePipeline`, allowing interactive screenshots to reuse the compiled SDF
+`ScenePipeline`, allowing repeated headless renders to reuse the compiled SDF
 pipeline. Its row stride is the width times four rounded up to
 `wgpu::COPY_BYTES_PER_ROW_ALIGNMENT`; callers can consume each row directly
 without a packed image allocation. The mapped view owns the readback buffer and
@@ -112,9 +112,9 @@ Naga reflection rejects user resource bindings, including unused declarations.
 The CLI selects a surface-compatible adapter and constructs the renderer with
 `Renderer::from_adapter`; `device()` and `queue()` allow direct GPU drawing.
 Window redraws reuse the pipeline without CPU readback. Reload compiles a candidate
-pipeline before replacing the current pipeline and source. Screenshots use the
-same renderer's synchronous `render` path with the current background setting.
-Reload and screenshot failures leave the preview running.
+pipeline before replacing the current pipeline and source. Reload failures leave
+the preview running. Interactive screenshots are currently unavailable; `-i` and
+`-o` are mutually exclusive.
 
 The event loop waits when idle, suspends rendering for zero-sized/occluded windows,
 and handles outdated and lost surfaces. Initial dimensions are physical pixels;
@@ -162,8 +162,8 @@ in the CLI with or without its `interactive` feature.
 ## Development
 
 The CLI package's `interactive` feature is enabled by default. Without `-o`, the
-CLI opens a preview automatically; with `-o`, it renders offline unless `-i` is
-also specified. It gates the
+CLI opens a preview automatically; with `-o`, it renders offline. Explicit `-i`
+conflicts with `-o`. It gates the
 `interactive` module and the CLI's direct futures, glam,
 wgpu, and winit dependencies. The library still requires wgpu and futures for
 headless rendering; disabling the feature does not remove the GPU requirement.
@@ -221,7 +221,7 @@ readback padding, image orientation, PNG round trips, shader error recovery,
 camera transforms, lighting, antialiasing coverage and straight-alpha colors,
 CLI output, and invalid parameters. GPU tests also check pipeline reuse, scene
 uniform changes, failed reload recovery, and opaque preview composition. Window
-input/resize/screenshot behavior requires a desktop or an isolated X11 server for
+input/resize behavior requires a desktop or an isolated X11 server for
 end-to-end verification; normal CI does not open windows.
 
 GPU-independent checks use the same commands locally and in CI:

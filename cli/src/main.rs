@@ -29,7 +29,7 @@ struct Args {
 
     #[cfg(feature = "interactive")]
     /// Open an interactive preview window (default when -o is omitted)
-    #[arg(short, long)]
+    #[arg(short, long, conflicts_with = "output")]
     interactive: bool,
 
     /// Background: transparent, checkerboard, rgb(r,g,b) in 0-255, black, or white
@@ -348,14 +348,16 @@ mod tests {
             "sdf-view",
             "sphere.glsl",
             "--interactive",
-            "-o",
-            "snapshot.png",
             "--antialiasing",
             "4",
         ])
         .unwrap();
-        assert_eq!(args.output.as_deref(), Some(Path::new("snapshot.png")));
         assert_eq!(args.antialiasing, Antialiasing::X4);
+        for flag in ["--interactive", "-i"] {
+            assert!(
+                Args::try_parse_from(["sdf-view", "sphere.glsl", flag, "-o", "out.png"]).is_err()
+            );
+        }
         assert!(
             Args::try_parse_from([
                 "sdf-view",
