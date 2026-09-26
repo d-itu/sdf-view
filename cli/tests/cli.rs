@@ -34,6 +34,32 @@ fn logs_to_stderr_with_environment_filter() {
 }
 
 #[test]
+fn dimension_overflow_is_rejected_before_input_or_gpu_initialization() {
+    for (width, diagnostic) in [
+        ("4294967295", "row size overflow"),
+        ("1073741823", "padded row size overflow"),
+    ] {
+        // A missing input and disabled backends must not mask invalid dimensions.
+        let output = Command::new(env!("CARGO_BIN_EXE_sdf-view"))
+            .args([
+                "missing-input-for-dimension-validation.glsl",
+                "-o",
+                "unused.png",
+                "--width",
+                width,
+            ])
+            .env("WGPU_BACKEND", "noop")
+            .env_remove("RUST_LOG")
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(2));
+        assert!(output.stdout.is_empty());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.contains(diagnostic), "{stderr}");
+    }
+}
+
+#[test]
 fn help_version_and_invalid_arguments() {
     let help = cli(&["--help"]);
     assert!(help.status.success());

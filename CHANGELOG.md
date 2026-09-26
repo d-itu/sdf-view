@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Validate readback size arithmetic before GPU initialization. Invalid dimensions
+  return CLI exit code 2, including settings errors wrapped by renderer errors.
+
 - Temporarily remove interactive screenshots and the `S` shortcut. `-i` and `-o`
   are now mutually exclusive; use offline rendering to save PNGs.
 - Open an interactive preview when `-o` is omitted. With `-o`, render offline.

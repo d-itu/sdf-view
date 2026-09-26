@@ -43,9 +43,28 @@ pub(crate) enum Error {
 impl Error {
     pub(crate) fn exit_code(&self) -> ExitCode {
         match self {
-            Self::Settings(_) => ExitCode::from(2),
+            Self::Settings(_) | Self::Render(sdf_view::Error::Settings(_)) => ExitCode::from(2),
             _ => ExitCode::FAILURE,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_errors_preserve_exit_code_through_renderer_conversion() {
+        let settings = sdf_view::SettingsError::RowSizeOverflow;
+        assert_eq!(Error::from(settings).exit_code(), ExitCode::from(2));
+        assert_eq!(
+            Error::from(sdf_view::Error::from(settings)).exit_code(),
+            ExitCode::from(2)
+        );
+        assert_eq!(
+            Error::from(io::Error::other("test I/O failure")).exit_code(),
+            ExitCode::FAILURE
+        );
     }
 }
 

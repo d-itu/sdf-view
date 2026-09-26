@@ -83,7 +83,7 @@ including a final vec4 for object color; pipeline updates do not recompile shade
 `Background` defaults to `Transparent` and also supports `Checkerboard`
 and `Rgb([u8; 3])` with sRGB components. Use
 `..Default::default()` when overriding only some fields. `validate()` checks
-scene settings without a GPU; `render()` delegates device-specific resource limits to
+scene settings and readback size arithmetic without a GPU; `render()` delegates device-specific resource limits to
 wgpu after validating local arithmetic and dimensions.
 Invalid camera or lighting settings return `Error::Settings`. `SettingsError` is
 an enum with variants for dimensions, camera vectors/FOV, and light strengths;
@@ -92,7 +92,8 @@ components outside `[0, 1]` are accepted and clamped before rendering.
 `RenderOptions::validate()` returns `SettingsError` directly. Library
 error definitions live in `src/error.rs` and are re-exported at the crate root;
 CLI runtime and parser error types live in `cli/src/error.rs`. The CLI validates
-these before initializing the GPU and exits with code 2.
+these before initializing the GPU and exits with code 2, including when settings
+errors are wrapped by renderer errors.
 
 ### Interactive rendering
 

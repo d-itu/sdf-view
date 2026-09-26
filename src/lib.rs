@@ -71,9 +71,7 @@ impl RenderOptions {
     /// Validate dimensions and scene settings without initializing a GPU.
     /// Device-specific size limits are checked separately by `Renderer::render`.
     pub fn validate(&self) -> Result<(), SettingsError> {
-        if self.width == 0 || self.height == 0 {
-            return Err(SettingsError::ZeroDimensions);
-        }
+        ReadbackLayout::new([self.width, self.height])?;
         if !self.object_color.iter().all(|v| v.is_finite()) {
             return Err(SettingsError::NonFiniteFloat);
         }
@@ -331,6 +329,15 @@ mod tests {
             (u32::MAX / 4, 1, SettingsError::PaddedRowSizeOverflow),
         ] {
             assert_eq!(ReadbackLayout::new([width, height]).err(), Some(error));
+            assert_eq!(
+                RenderOptions {
+                    width,
+                    height,
+                    ..Default::default()
+                }
+                .validate(),
+                Err(error)
+            );
         }
     }
 }
