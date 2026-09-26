@@ -167,6 +167,8 @@ impl ScenePipeline {
         options.validate()?;
         let basis = options.camera.basis()?;
         let light = options.light.normalized_direction()?;
+        let light_color = options.light.color.map(|v| v.clamp(0.0, 1.0));
+        let object_color = options.object_color.map(|v| v.clamp(0.0, 1.0));
         let rows = [
             [
                 options.width as f32,
@@ -188,9 +190,9 @@ impl ScenePipeline {
             [basis.up[0], basis.up[1], basis.up[2], 0.0],
             [light[0], light[1], light[2], options.light.intensity],
             [
-                options.light.color[0],
-                options.light.color[1],
-                options.light.color[2],
+                light_color[0],
+                light_color[1],
+                light_color[2],
                 options.light.ambient,
             ],
             [
@@ -199,12 +201,7 @@ impl ScenePipeline {
                 color[2],
                 if premultiplied { 1.0 } else { 0.0 },
             ],
-            [
-                options.object_color[0],
-                options.object_color[1],
-                options.object_color[2],
-                0.0,
-            ],
+            [object_color[0], object_color[1], object_color[2], 0.0],
         ];
         let mut bytes = [0u8; 144];
         for (dst, value) in bytes

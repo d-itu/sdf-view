@@ -74,8 +74,8 @@ and resource bindings. Reserve the `sdf_view_` prefix. Naga does not implement a
 GLSL features. Shader and pipeline validation failures return `Error::Gpu`.
 
 `RenderOptions` includes `width`, `height`, `camera`, `light`, `antialiasing`, and
-`background`, and `object_color`. Object color is a finite linear RGB albedo in
-`[0, 1]`, defaulting to the linear decoding of sRGB `[137, 196, 237]`.
+`background`, and `object_color`. Object color is a finite linear RGB albedo,
+clamped to `[0, 1]` when uploading scene uniforms, defaulting to the linear decoding of sRGB `[137, 196, 237]`.
 The CLI uses one color parser for background, light, and object colors:
 `rgb(r,g,b)` in 0..=255, `black`, or `white`. It decodes light and object colors
 from sRGB before constructing scene options. The scene uniform is 144 bytes,
@@ -86,8 +86,10 @@ and `Rgb([u8; 3])` with sRGB components. Use
 scene settings without a GPU; `render()` delegates device-specific resource limits to
 wgpu after validating local arithmetic and dimensions.
 Invalid camera or lighting settings return `Error::Settings`. `SettingsError` is
-an enum with distinct variants for dimensions, camera vectors/FOV, and light/object
-colors and strengths; `RenderOptions::validate()` returns it directly. Library
+an enum with variants for dimensions, camera vectors/FOV, and light strengths;
+nonfinite vector components share `NonFiniteFloat`. Finite light and object color
+components outside `[0, 1]` are accepted and clamped before rendering.
+`RenderOptions::validate()` returns `SettingsError` directly. Library
 error definitions live in `src/error.rs` and are re-exported at the crate root;
 CLI runtime and parser error types live in `cli/src/error.rs`. The CLI validates
 these before initializing the GPU and exits with code 2.
@@ -134,7 +136,7 @@ targets desktop Linux and Windows; mobile lifecycle handling is not implemented.
   and up vectors parallel to the viewing direction.
 - Directional light vectors point from the surface toward the light in world
   coordinates and are normalized automatically. The default is `(-0.5, 0.8, 1)`.
-- Light color is linear RGB in `[0, 1]`; diffuse intensity defaults to `0.85`,
+- Light color is finite linear RGB, clamped to `[0, 1]`; diffuse intensity defaults to `0.85`,
   and white ambient strength to `0.15`. Strengths must be nonnegative and finite,
   with a finite sum. Values above 1 can saturate the PNG output.
 - Illumination is `albedo * (ambient + color * intensity * max(dot(normal, direction), 0))`.
@@ -159,7 +161,9 @@ in the CLI with or without its `interactive` feature.
 
 ## Development
 
-The CLI package's `interactive` feature is enabled by default. It gates the
+The CLI package's `interactive` feature is enabled by default. Without `-o`, the
+CLI opens a preview automatically; with `-o`, it renders offline unless `-i` is
+also specified. It gates the
 `interactive` module and the CLI's direct futures, glam,
 wgpu, and winit dependencies. The library still requires wgpu and futures for
 headless rendering; disabling the feature does not remove the GPU requirement.

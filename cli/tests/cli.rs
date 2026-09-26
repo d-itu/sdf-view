@@ -75,6 +75,7 @@ fn help_version_and_invalid_arguments() {
     assert!(cli(&["--version"]).status.success());
     for args in [
         vec![],
+        #[cfg(not(feature = "interactive"))]
         vec!["examples/sphere.glsl"],
         vec!["examples/sphere.glsl", "-o", "unused.png", "--width", "0"],
         vec!["examples/sphere.glsl", "-o", "unused.png", "--height", "-1"],

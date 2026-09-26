@@ -48,7 +48,7 @@ pub struct RenderOptions {
     pub light: DirectionalLight,
     pub antialiasing: Antialiasing,
     pub background: Background,
-    /// Linear RGB surface albedo, with finite components in [0, 1].
+    /// Linear RGB surface albedo; finite components are clamped to [0, 1].
     pub object_color: [f32; 3],
 }
 
@@ -73,6 +73,9 @@ impl RenderOptions {
     pub fn validate(&self) -> Result<(), SettingsError> {
         if self.width == 0 || self.height == 0 {
             return Err(SettingsError::ZeroDimensions);
+        }
+        if !self.object_color.iter().all(|v| v.is_finite()) {
+            return Err(SettingsError::NonFiniteFloat);
         }
         self.camera.basis()?;
         self.light.normalized_direction()?;
@@ -278,6 +281,37 @@ impl ReadbackLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validates_colors() {
+        for component in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            for options in [
+                RenderOptions {
+                    object_color: [component; 3],
+                    ..Default::default()
+                },
+                RenderOptions {
+                    light: DirectionalLight {
+                        color: [component; 3],
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ] {
+                assert_eq!(options.validate(), Err(SettingsError::NonFiniteFloat));
+            }
+        }
+        RenderOptions {
+            object_color: [-1.0, 0.5, 2.0],
+            light: DirectionalLight {
+                color: [2.0, -1.0, 0.5],
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+        .validate()
+        .unwrap();
+    }
 
     #[test]
     fn readback_padding() {

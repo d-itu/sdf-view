@@ -24,12 +24,11 @@ struct Args {
 
     /// Destination PNG file (overwrites an existing file)
     #[arg(short, long, value_name = "PNG")]
-    #[cfg_attr(feature = "interactive", arg(required_unless_present = "interactive"))]
     #[cfg_attr(not(feature = "interactive"), arg(required = true))]
     output: Option<PathBuf>,
 
     #[cfg(feature = "interactive")]
-    /// Open an interactive preview window
+    /// Open an interactive preview window (default when -o is omitted)
     #[arg(short, long)]
     interactive: bool,
 
@@ -189,7 +188,7 @@ impl Args {
 fn run(args: Args) -> Result<(), Error> {
     let source = fs::read_to_string(&args.input)?;
     #[cfg(feature = "interactive")]
-    if args.interactive {
+    if args.interactive || args.output.is_none() {
         return interactive::run(args, source);
     }
     let output = args
@@ -314,7 +313,9 @@ mod tests {
         assert!(args.interactive);
         assert!(args.output.is_none());
         assert_eq!(args.background, Background::Transparent);
-        for mode in [vec!["--interactive"], vec!["-o", "out.png"]] {
+        let implicit = Args::try_parse_from(["sdf-view", "sphere.glsl"]).unwrap();
+        assert!(implicit.output.is_none());
+        for mode in [vec![], vec!["--interactive"], vec!["-o", "out.png"]] {
             for (value, expected) in [
                 ("transparent", Background::Transparent),
                 ("checkerboard", Background::Checkerboard),
@@ -355,7 +356,6 @@ mod tests {
         .unwrap();
         assert_eq!(args.output.as_deref(), Some(Path::new("snapshot.png")));
         assert_eq!(args.antialiasing, Antialiasing::X4);
-        assert!(Args::try_parse_from(["sdf-view", "sphere.glsl"]).is_err());
         assert!(
             Args::try_parse_from([
                 "sdf-view",

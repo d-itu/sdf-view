@@ -25,8 +25,9 @@ sdf-view --version
 ```
 
 To run from source, use `cargo run --` in place of `sdf-view`.
-The output path is required for PNG rendering; in interactive mode it is optional
-and enables screenshots. Its parent directory must exist, and existing files are
+Omitting `-o` opens an interactive preview. Specifying `-o` renders a PNG;
+combine it with `-i` to enable screenshots in the preview. The output parent
+directory must exist, and existing files are
 overwritten. The rendered surface is blue with a transparent background by default.
 
 The CLI package enables its `interactive` Cargo feature by default. For an
@@ -48,7 +49,7 @@ color codes; help and version output retain the standard CLI format.
 ## Interactive preview
 
 ```sh
-sdf-view sphere.glsl --interactive
+sdf-view sphere.glsl
 sdf-view sphere.glsl --interactive --background checkerboard --antialiasing 4 -o snapshot.png
 ```
 
@@ -89,8 +90,8 @@ input while idle.
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `-o, --output <PNG>` | Output or screenshot file | Required unless interactive |
-| `--interactive` | Open a preview window | Off |
+| `-o, --output <PNG>` | Output or screenshot file | Omit to open preview |
+| `-i, --interactive` | Open a preview window even with `-o` | On when `-o` is omitted |
 | `--background <BACKGROUND>` | `transparent`, `checkerboard`, or `rgb(r,g,b)` (0–255) | `transparent` |
 | `--width <PIXELS>` | Image width | `512` |
 | `--height <PIXELS>` | Image height | `512` |

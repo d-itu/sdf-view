@@ -70,7 +70,7 @@ impl Camera {
 pub struct DirectionalLight {
     /// Direction from the surface toward the light; need not be normalized.
     pub direction: [f32; 3],
-    /// Linear RGB color; each component must be in [0, 1].
+    /// Linear RGB color; finite components are clamped to [0, 1].
     pub color: [f32; 3],
     /// Nonnegative diffuse strength. Values above 1 can saturate the PNG output.
     pub intensity: f32,

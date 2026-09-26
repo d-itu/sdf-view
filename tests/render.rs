@@ -115,7 +115,7 @@ fn sphere_rendering_and_error_recovery() {
     )
     .unwrap();
 
-    for object_color in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0; 3]] {
+    for object_color in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0; 3], [2.0, -1.0, 0.0]] {
         let pixels = renderer
             .render_with_pipeline(
                 &pipeline,
@@ -132,8 +132,42 @@ fn sphere_rendering_and_error_recovery() {
                 },
             )
             .unwrap();
-        assert_eq!(&pixels[..3], &object_color.map(|v| (v * 255.0) as u8));
+        assert_eq!(
+            &pixels[..3],
+            &object_color.map(|v| (v.clamp(0.0, 1.0) * 255.0) as u8)
+        );
         assert_eq!(pixels[3], 255);
+    }
+
+    for (object_color, light_color) in [([2.0, -1.0, 0.5], [1.0; 3]), ([0.25; 3], [2.0, -1.0, 0.5])]
+    {
+        let options = RenderOptions {
+            width: 1,
+            height: 1,
+            object_color,
+            light: sdf_view::DirectionalLight {
+                direction: [0.0, 0.0, 1.0],
+                color: light_color,
+                intensity: 0.25,
+                ambient: 0.0,
+            },
+            ..Default::default()
+        };
+        let actual = renderer.render_with_pipeline(&pipeline, options).unwrap();
+        let expected = renderer
+            .render_with_pipeline(
+                &pipeline,
+                RenderOptions {
+                    object_color: object_color.map(|v| v.clamp(0.0, 1.0)),
+                    light: sdf_view::DirectionalLight {
+                        color: light_color.map(|v| v.clamp(0.0, 1.0)),
+                        ..options.light
+                    },
+                    ..options
+                },
+            )
+            .unwrap();
+        assert_eq!(&actual[..4], &expected[..4]);
     }
 
     for options in [

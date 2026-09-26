@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Open an interactive preview when `-o` is omitted. With `-o`, render offline
+  unless `-i` is also specified. Builds without `interactive` still require `-o`.
+- Clamp finite object and light color components to `[0, 1]` before uploading
+  uniforms. Nonfinite components return the shared `SettingsError::NonFiniteFloat`.
+
 - Make `sdf_view::SettingsError` an enum with distinct dimension, camera, and
   lighting variants. Callers can match variants instead of parsing diagnostics;
   existing display messages and `Error::Settings` conversion are preserved.
