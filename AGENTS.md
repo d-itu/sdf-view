@@ -85,7 +85,11 @@ and `Rgb([u8; 3])` with sRGB components. Use
 `..Default::default()` when overriding only some fields. `validate()` checks
 scene settings without a GPU; `render()` delegates device-specific resource limits to
 wgpu after validating local arithmetic and dimensions.
-Invalid camera or lighting settings return `Error::Settings`. The CLI validates
+Invalid camera or lighting settings return `Error::Settings`. `SettingsError` is
+an enum with distinct variants for dimensions, camera vectors/FOV, and light/object
+colors and strengths; `RenderOptions::validate()` returns it directly. Library
+error definitions live in `src/error.rs` and are re-exported at the crate root;
+CLI runtime and parser error types live in `cli/src/error.rs`. The CLI validates
 these before initializing the GPU and exits with code 2.
 
 ### Interactive rendering

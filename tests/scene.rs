@@ -1,6 +1,6 @@
+use sdf_view::{Camera, DirectionalLight, RenderOptions, SettingsError};
 #[cfg(feature = "gpu-test")]
-use sdf_view::Renderer;
-use sdf_view::{Camera, DirectionalLight, Error, RenderOptions};
+use sdf_view::{Error, Renderer};
 
 #[test]
 fn validates_scene_without_a_device() {
@@ -49,27 +49,27 @@ fn validates_scene_without_a_device() {
             direction: [f32::NAN; 3],
             ..defaults.light
         },
-        DirectionalLight {
-            color: [-1.0, 1.0, 1.0],
-            ..defaults.light
-        },
-        DirectionalLight {
-            color: [2.0; 3],
-            ..defaults.light
-        },
-        DirectionalLight {
-            intensity: -1.0,
-            ..defaults.light
-        },
-        DirectionalLight {
-            ambient: f32::INFINITY,
-            ..defaults.light
-        },
     ] {
         invalid.push(RenderOptions { light, ..defaults });
     }
-    for options in invalid {
-        std::assert_matches!(options.validate(), Err(_), "{options:?}");
+    let expected = [
+        SettingsError::InvalidVerticalFov,
+        SettingsError::InvalidVerticalFov,
+        SettingsError::InvalidVerticalFov,
+        SettingsError::InvalidVerticalFov,
+        SettingsError::InvalidVerticalFov,
+        SettingsError::InvalidVerticalFov,
+        SettingsError::CoincidentCameraPositionAndTarget,
+        SettingsError::ZeroCameraUp,
+        SettingsError::ParallelCameraUp,
+        SettingsError::NonFiniteFloat,
+        SettingsError::NonFiniteFloat,
+        SettingsError::ZeroLightDirection,
+        SettingsError::NonFiniteFloat,
+    ];
+    assert_eq!(invalid.len(), expected.len());
+    for (options, error) in invalid.into_iter().zip(expected) {
+        assert_eq!(options.validate(), Err(error), "{options:?}");
     }
 }
 

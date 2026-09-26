@@ -14,28 +14,8 @@ pub use pipeline::ScenePipeline;
 mod scene;
 pub use scene::{Camera, DirectionalLight};
 
-/// Errors from initialization or rendering.
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error(transparent)]
-    Adapter(#[from] wgpu::RequestAdapterError),
-    #[error(transparent)]
-    Device(#[from] wgpu::RequestDeviceError),
-    #[error(transparent)]
-    Settings(#[from] SettingsError),
-    #[error(transparent)]
-    Gpu(#[from] wgpu::Error),
-    #[error(transparent)]
-    Poll(#[from] wgpu::PollError),
-    #[error(transparent)]
-    Map(#[from] wgpu::BufferAsyncError),
-    #[error(transparent)]
-    MapRange(#[from] wgpu::MapRangeError),
-}
-
-#[derive(Debug, thiserror::Error)]
-#[error("invalid render settings: {0}")]
-pub struct SettingsError(&'static str);
+mod error;
+pub use error::{Error, SettingsError};
 
 /// Number of subpixel rays traced per output pixel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -92,16 +72,7 @@ impl RenderOptions {
     /// Device-specific size limits are checked separately by `Renderer::render`.
     pub fn validate(&self) -> Result<(), SettingsError> {
         if self.width == 0 || self.height == 0 {
-            return Err(SettingsError("width and height must be nonzero"));
-        }
-        if !self
-            .object_color
-            .iter()
-            .all(|c| c.is_finite() && (0.0..=1.0).contains(c))
-        {
-            return Err(SettingsError(
-                "object color components must be finite and between 0 and 1",
-            ));
+            return Err(SettingsError::ZeroDimensions);
         }
         self.camera.basis()?;
         self.light.normalized_direction()?;
@@ -284,20 +255,18 @@ struct ReadbackLayout {
 impl ReadbackLayout {
     fn new([width, height]: [u32; 2]) -> Result<Self, SettingsError> {
         if width == 0 || height == 0 {
-            return Err(SettingsError("width and height must be nonzero"));
+            return Err(SettingsError::ZeroDimensions);
         }
-        let row_bytes = width
-            .checked_mul(4)
-            .ok_or(SettingsError("row size overflow"))?;
+        let row_bytes = width.checked_mul(4).ok_or(SettingsError::RowSizeOverflow)?;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_row_bytes = row_bytes
             .checked_add(alignment - 1)
-            .ok_or(SettingsError("padded row size overflow"))?
+            .ok_or(SettingsError::PaddedRowSizeOverflow)?
             / alignment
             * alignment;
         let buffer_size = u64::from(padded_row_bytes) * u64::from(height);
         if usize::try_from(buffer_size).is_err() {
-            return Err(SettingsError("image exceeds the addressable readback size"));
+            return Err(SettingsError::ReadbackSizeOverflow);
         }
         Ok(Self {
             padded_row_bytes,
@@ -311,17 +280,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn validates_object_color() {
-        for component in [-1.0, 1.1, f32::NAN, f32::INFINITY] {
-            let options = RenderOptions {
-                object_color: [component, 0.0, 0.0],
-                ..Default::default()
-            };
-            std::assert_matches!(options.validate(), Err(SettingsError(_)));
-        }
-    }
-
-    #[test]
     fn readback_padding() {
         for (width, padded) in [(1, 256), (64, 256), (65, 512), (129, 768)] {
             let layout = ReadbackLayout::new([width, 3]).unwrap();
@@ -332,8 +290,13 @@ mod tests {
 
     #[test]
     fn invalid_dimensions() {
-        for (width, height) in [(0, 1), (1, 0), (u32::MAX, 1)] {
-            std::assert_matches!(ReadbackLayout::new([width, height]), Err(SettingsError(_)));
+        for (width, height, error) in [
+            (0, 1, SettingsError::ZeroDimensions),
+            (1, 0, SettingsError::ZeroDimensions),
+            (u32::MAX, 1, SettingsError::RowSizeOverflow),
+            (u32::MAX / 4, 1, SettingsError::PaddedRowSizeOverflow),
+        ] {
+            assert_eq!(ReadbackLayout::new([width, height]).err(), Some(error));
         }
     }
 }

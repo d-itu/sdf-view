@@ -1,6 +1,13 @@
 # Changelog
 
-- Centralize CLI failures in `CliError`, preserving input paths and underlying
+## Unreleased
+
+- Make `sdf_view::SettingsError` an enum with distinct dimension, camera, and
+  lighting variants. Callers can match variants instead of parsing diagnostics;
+  existing display messages and `Error::Settings` conversion are preserved.
+  Move library and CLI error definitions into their respective `error.rs` modules.
+
+- Centralize CLI failures in `Error`, preserving underlying
   I/O, renderer, PNG, and interactive errors. Runtime failures use exit code 1;
   invalid render settings retain exit code 2.
 

@@ -11,54 +11,9 @@ mod interactive;
 use clap::Parser;
 use sdf_view::{Antialiasing, Background, Camera, DirectionalLight, RenderOptions, Renderer};
 
-#[derive(Debug, thiserror::Error)]
-enum Error {
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
-    Render(#[from] sdf_view::Error),
-    #[error("could not encode PNG '{path}': {source}")]
-    Png {
-        path: PathBuf,
-        #[source]
-        source: png::EncodingError,
-    },
-    #[error(transparent)]
-    Settings(#[from] sdf_view::SettingsError),
+mod error;
+use error::{Error, InvalidBackground, InvalidColor};
 
-    #[cfg(feature = "interactive")]
-    #[error(transparent)]
-    EventLoop(#[from] winit::error::EventLoopError),
-
-    #[cfg(feature = "interactive")]
-    #[error(transparent)]
-    Os(#[from] winit::error::OsError),
-
-    #[cfg(feature = "interactive")]
-    #[error(transparent)]
-    CreateSurface(#[from] wgpu::CreateSurfaceError),
-
-    #[cfg(feature = "interactive")]
-    #[error("surface validation failed")]
-    SurfaceValidation,
-
-    #[cfg(feature = "interactive")]
-    #[error("surface has no supported configuration")]
-    NoSupportedConfiguration,
-
-    #[cfg(feature = "interactive")]
-    #[error("surface has no sRGB format")]
-    NoSupportedFormat,
-}
-
-impl Error {
-    fn exit_code(&self) -> ExitCode {
-        match self {
-            Self::Settings(_) => ExitCode::from(2),
-            _ => ExitCode::FAILURE,
-        }
-    }
-}
 /// Render a GLSL signed distance function to a PNG image.
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -131,12 +86,6 @@ struct Args {
     ambient: f32,
 }
 
-#[derive(Debug, thiserror::Error, Clone, Copy)]
-#[error(
-    "expected transparent, checkerboard, black, white, or rgb(r,g,b) with integer components in 0..=255"
-)]
-struct InvalidBackground;
-
 fn parse_background(value: &str) -> Result<Background, InvalidBackground> {
     match value {
         "transparent" => Ok(Background::Transparent),
@@ -146,12 +95,6 @@ fn parse_background(value: &str) -> Result<Background, InvalidBackground> {
             .map_err(|_| InvalidBackground),
     }
 }
-
-#[derive(Debug, thiserror::Error, Clone, Copy)]
-#[error(
-    "expected transparent, checkerboard, black, white, or rgb(r,g,b) with integer components in 0..=255"
-)]
-struct InvalidColor;
 
 fn parse_color(value: &str) -> Result<[u8; 3], InvalidColor> {
     match value {

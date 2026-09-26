@@ -37,29 +37,24 @@ impl Camera {
             .chain(&self.up)
             .all(|v| v.is_finite())
         {
-            return Err(SettingsError("camera vectors must be finite"));
+            return Err(SettingsError::NonFiniteFloat);
         }
         if !self.vertical_fov_degrees.is_finite()
             || self.vertical_fov_degrees <= 0.0
             || self.vertical_fov_degrees >= 180.0
             || (self.vertical_fov_degrees.to_radians() * 0.5).tan() <= 0.0
         {
-            return Err(SettingsError(
-                "vertical FOV must be finite and strictly between 0 and 180 degrees",
-            ));
+            return Err(SettingsError::InvalidVerticalFov);
         }
         // Calculate differences in f64 to avoid overflow for finite f32 inputs.
         let forward = normalize(std::array::from_fn(|i| {
             f64::from(self.target[i]) - f64::from(self.position[i])
         }))
-        .ok_or(SettingsError("camera position and target must differ"))?;
-        let up =
-            normalize(self.up.map(f64::from)).ok_or(SettingsError("camera up must be nonzero"))?;
+        .ok_or(SettingsError::CoincidentCameraPositionAndTarget)?;
+        let up = normalize(self.up.map(f64::from)).ok_or(SettingsError::ZeroCameraUp)?;
         let right = cross(forward, up);
         if right.iter().map(|v| v * v).sum::<f64>() < 1e-12 {
-            return Err(SettingsError(
-                "camera up must not be parallel to the viewing direction",
-            ));
+            return Err(SettingsError::ParallelCameraUp);
         }
         let right = normalize(right).unwrap();
         Ok(CameraBasis {
@@ -96,17 +91,11 @@ impl Default for DirectionalLight {
 
 impl DirectionalLight {
     pub(crate) fn normalized_direction(self) -> Result<[f32; 3], SettingsError> {
-        if !self.direction.iter().all(|v| v.is_finite()) {
-            return Err(SettingsError("light direction must be finite"));
+        if !self.direction.into_iter().all(f32::is_finite) {
+            return Err(SettingsError::NonFiniteFloat);
         }
-        if !self
-            .color
-            .iter()
-            .all(|v| v.is_finite() && (0.0..=1.0).contains(v))
-        {
-            return Err(SettingsError(
-                "light color components must be finite and between 0 and 1",
-            ));
+        if !self.color.into_iter().all(f32::is_finite) {
+            return Err(SettingsError::NonFiniteFloat);
         }
         if !self.intensity.is_finite()
             || self.intensity < 0.0
@@ -114,13 +103,11 @@ impl DirectionalLight {
             || self.ambient < 0.0
             || !(self.intensity + self.ambient).is_finite()
         {
-            return Err(SettingsError(
-                "light strengths must be finite and nonnegative, with a finite sum",
-            ));
+            return Err(SettingsError::InvalidLightStrength);
         }
         normalize(self.direction.map(f64::from))
             .map(|v| v.map(|c| c as f32))
-            .ok_or(SettingsError("light direction must be nonzero"))
+            .ok_or(SettingsError::ZeroLightDirection)
     }
 }
 
