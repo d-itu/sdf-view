@@ -20,16 +20,6 @@
         in
         {
           default = pkgs.mkShell {
-            packages = with pkgs; [
-              cargo
-              rustc
-              rustfmt
-              clippy
-              rust-analyzer
-            ];
-
-            RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
-
             # Export this as part of the environment, including for tools that
             # import Nix variables without executing shellHook.
             # wgpu and winit load graphics and window libraries dynamically.
