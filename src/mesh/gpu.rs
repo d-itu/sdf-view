@@ -11,10 +11,13 @@ const BRICK: u32 = 32;
 // Bound scratch memory while amortizing synchronous count readback.
 const BATCH: usize = 8;
 const SAMPLE_BYTES: u64 = 35 * 35 * 35 * 4;
-const CELL_BYTES: u64 = 32 * 32 * 32 * 8;
+const CELL_BYTES: u64 = 32 * 32 * 32 * 16;
+const EDGE_BYTES: u64 = 3 * 33 * 33 * 33 * 4;
+const STATUS_BYTES: u64 = 12;
 
 pub(super) struct Chunk {
     pub vertices: wgpu::Buffer,
+    pub indices: wgpu::Buffer,
     pub count: u32,
     pub min: [f32; 3],
     pub max: [f32; 3],
@@ -26,6 +29,7 @@ struct Slot {
     cells: wgpu::Buffer,
     groups: wgpu::Buffer,
     status: wgpu::Buffer,
+    edges: wgpu::Buffer,
     sampling: wgpu::BindGroup,
     compute: wgpu::BindGroup,
 }
@@ -110,7 +114,7 @@ pub(super) fn extract(
         .limits()
         .max_buffer_size
         .min(device.limits().max_storage_buffer_binding_size);
-    if limit < CELL_BYTES.max(SAMPLE_BYTES) {
+    if limit < CELL_BYTES.max(SAMPLE_BYTES).max(EDGE_BYTES) {
         return Err(MeshError::SamplingBufferLimit.into());
     }
     let source = format!(
@@ -161,7 +165,7 @@ pub(super) fn extract(
     if let Some(error) = block_on(scope.pop()) {
         return Err(error.into());
     }
-    let entries: Vec<_> = (0..7)
+    let entries: Vec<_> = (0..9)
         .map(|binding| wgpu::BindGroupLayoutEntry {
             binding,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -203,6 +207,7 @@ pub(super) fn extract(
     let classify = make(&compute_shader, "classify", Some(&pipeline_layout));
     let scan = make(&compute_shader, "scan_groups", Some(&pipeline_layout));
     let generate = make(&compute_shader, "generate", Some(&pipeline_layout));
+    let generate_indices = make(&compute_shader, "generate_indices", Some(&pipeline_layout));
     if let Some(error) = block_on(scope.pop()) {
         return Err(error.into());
     }
@@ -220,6 +225,12 @@ pub(super) fn extract(
         device,
         "unused vertex output",
         24,
+        wgpu::BufferUsages::STORAGE,
+    );
+    let dummy_indices = buffer(
+        device,
+        "unused index output",
+        4,
         wgpu::BufferUsages::STORAGE,
     );
     let slots: Vec<_> = (0..batch)
@@ -245,16 +256,22 @@ pub(super) fn extract(
             let groups = buffer(
                 device,
                 "brick group offsets",
-                128 * 4,
+                128 * 8,
                 wgpu::BufferUsages::STORAGE,
             );
             let status = buffer(
                 device,
                 "brick status",
-                8,
+                STATUS_BYTES,
                 wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
+            );
+            let edges = buffer(
+                device,
+                "brick edge vertices",
+                EDGE_BYTES,
+                wgpu::BufferUsages::STORAGE,
             );
             let sampling = bind(
                 device,
@@ -264,7 +281,17 @@ pub(super) fn extract(
             let compute = bind(
                 device,
                 &layout,
-                &[&params, &samples, &table, &cells, &groups, &status, &dummy],
+                &[
+                    &params,
+                    &samples,
+                    &table,
+                    &cells,
+                    &groups,
+                    &status,
+                    &dummy,
+                    &edges,
+                    &dummy_indices,
+                ],
             );
             Slot {
                 params,
@@ -272,6 +299,7 @@ pub(super) fn extract(
                 cells,
                 groups,
                 status,
+                edges,
                 sampling,
                 compute,
             }
@@ -280,7 +308,7 @@ pub(super) fn extract(
     let counts = buffer(
         device,
         "batch counts readback",
-        batch as u64 * 8,
+        batch as u64 * STATUS_BYTES,
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
     let mut chunks = Vec::new();
@@ -313,21 +341,28 @@ pub(super) fn extract(
                 dispatch(&mut pass, &classify, &slot.compute, [128, 1, 1]);
                 dispatch(&mut pass, &scan, &slot.compute, [1, 1, 1]);
             }
-            encoder.copy_buffer_to_buffer(&slot.status, 0, &counts, i as u64 * 8, 8);
+            encoder.copy_buffer_to_buffer(
+                &slot.status,
+                0,
+                &counts,
+                i as u64 * STATUS_BYTES,
+                STATUS_BYTES,
+            );
         }
         queue.submit([encoder.finish()]);
         let results = readback(device, &counts)?;
         let mut encoder = device.create_command_encoder(&Default::default());
         for (i, slot) in slots[..active].iter().enumerate() {
-            if results[i * 2 + 1] != 0 {
+            if results[i * 3 + 1] != 0 {
                 return Err(MeshError::NonFiniteSamples.into());
             }
-            let count = results[i * 2];
+            let count = results[i * 3];
             if count == 0 {
                 continue;
             }
-            let size = u64::from(count) * 24;
-            if size > limit {
+            let size = u64::from(results[i * 3 + 2]) * 24;
+            let index_size = u64::from(count) * 4;
+            if size > limit || index_size > limit {
                 return Err(MeshError::VertexBufferLimit.into());
             }
             let vertices = buffer(
@@ -336,6 +371,14 @@ pub(super) fn extract(
                 size,
                 wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::VERTEX
+                    | wgpu::BufferUsages::COPY_SRC,
+            );
+            let indices = buffer(
+                device,
+                "GPU mesh indices",
+                index_size,
+                wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::INDEX
                     | wgpu::BufferUsages::COPY_SRC,
             );
             let output = bind(
@@ -349,11 +392,14 @@ pub(super) fn extract(
                     &slot.groups,
                     &slot.status,
                     &vertices,
+                    &slot.edges,
+                    &indices,
                 ],
             );
             {
                 let mut pass = encoder.begin_compute_pass(&Default::default());
                 dispatch(&mut pass, &generate, &output, [128, 1, 1]);
+                dispatch(&mut pass, &generate_indices, &output, [128, 1, 1]);
             }
             let index = first + i as u64;
             let origin = [index % side, (index / side) % side, index / (side * side)]
@@ -369,6 +415,7 @@ pub(super) fn extract(
             };
             chunks.push(Chunk {
                 vertices,
+                indices,
                 count,
                 min: point(false),
                 max: point(true),
@@ -387,7 +434,10 @@ mod tests {
     use crate::Renderer;
 
     fn vertices(renderer: &Renderer, chunks: &[Chunk]) -> Vec<[f32; 6]> {
-        let size = chunks.iter().map(|c| u64::from(c.count) * 24).sum();
+        let size = chunks
+            .iter()
+            .map(|c| c.vertices.size() + c.indices.size())
+            .sum();
         if size == 0 {
             return Vec::new();
         }
@@ -402,18 +452,32 @@ mod tests {
             .create_command_encoder(&Default::default());
         let mut offset = 0;
         for chunk in chunks {
-            let bytes = u64::from(chunk.count) * 24;
-            encoder.copy_buffer_to_buffer(&chunk.vertices, 0, &output, offset, bytes);
-            offset += bytes;
+            for source in [&chunk.vertices, &chunk.indices] {
+                encoder.copy_buffer_to_buffer(source, 0, &output, offset, source.size());
+                offset += source.size();
+            }
         }
         renderer.queue().submit([encoder.finish()]);
-        readback(renderer.device(), &output)
-            .unwrap()
-            .as_chunks::<6>()
-            .0
-            .iter()
-            .map(|v| v.map(f32::from_bits))
-            .collect()
+        let words = readback(renderer.device(), &output).unwrap();
+        let mut offset = 0;
+        let mut expanded = Vec::new();
+        for chunk in chunks {
+            let vertex_words = chunk.vertices.size() as usize / 4;
+            let vertices = &words[offset..offset + vertex_words];
+            offset += vertex_words;
+            let mut used = vec![false; vertex_words / 6];
+            for &index in &words[offset..offset + chunk.count as usize] {
+                assert!((index as usize) < used.len(), "index outside vertex buffer");
+                used[index as usize] = true;
+                expanded.push(
+                    [0, 1, 2, 3, 4, 5]
+                        .map(|axis| f32::from_bits(vertices[index as usize * 6 + axis])),
+                );
+            }
+            assert!(used.iter().all(|&used| used), "unreferenced shared vertex");
+            offset += chunk.count as usize;
+        }
+        expanded
     }
 
     fn compare(
@@ -444,6 +508,24 @@ mod tests {
         let chunks = extract(renderer.device(), renderer.queue(), sdf, options).unwrap();
         let gpu = vertices(renderer, &chunks);
         assert_eq!(gpu.len(), cpu.len());
+        // Preserve triangle connectivity and winding, not just the vertex multiset.
+        let triangles = |vertices: &[[f32; 6]]| {
+            let mut result = BTreeMap::new();
+            for triangle in vertices.as_chunks::<3>().0 {
+                let points: [[i32; 3]; 3] = [0, 1, 2]
+                    .map(|v| [0, 1, 2].map(|axis| (triangle[v][axis] * 1000.0).round() as i32));
+                let rotations = [
+                    points,
+                    [points[1], points[2], points[0]],
+                    [points[2], points[0], points[1]],
+                ];
+                *result
+                    .entry(*rotations.iter().min().unwrap())
+                    .or_insert(0u32) += 1;
+            }
+            result
+        };
+        assert_eq!(triangles(&cpu), triangles(&gpu));
         let group = |vertices: Vec<[f32; 6]>| {
             let mut map: BTreeMap<[i32; 3], Vec<[f32; 6]>> = BTreeMap::new();
             for v in vertices {
@@ -468,6 +550,38 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn indexed_planes_share_edges_across_partial_bricks() {
+        let renderer = Renderer::new().unwrap();
+        let options = MeshOptions {
+            min: [0.0; 3],
+            max: [33.0; 3],
+            resolution: 33,
+        };
+        for (axis, component) in ["x", "y", "z"].into_iter().enumerate() {
+            // Exact zeros exercise endpoints; the final row/column is a partial brick.
+            let sdf = format!("float sdf(vec3 p) {{ return round(p.{component}) - 16.0; }}");
+            let chunks = extract(renderer.device(), renderer.queue(), &sdf, options).unwrap();
+            assert_eq!(chunks.len(), 4);
+            assert_eq!(chunks.iter().map(|c| c.count).sum::<u32>(), 6 * 33 * 33);
+            // Each brick shares all of its grid edges. Only brick seams are duplicated.
+            assert_eq!(
+                chunks.iter().map(|c| c.vertices.size() / 24).sum::<u64>(),
+                35 * 35
+            );
+            for vertex in vertices(&renderer, &chunks) {
+                assert!((vertex[axis] - 16.0).abs() < 0.00001);
+                for direction in 0..3 {
+                    assert_eq!(
+                        vertex[3 + direction],
+                        if direction == axis { 1.0 } else { 0.0 }
+                    );
+                }
+            }
+            compare(&renderer, &sdf, options, |p| p[axis] - 16.0);
         }
     }
 
@@ -576,12 +690,17 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .unwrap();
             let count: u64 = chunks.iter().map(|c| u64::from(c.count)).sum();
+            let vertex_count: u64 = chunks.iter().map(|c| c.vertices.size() / 24).sum();
+            let bytes: u64 = chunks
+                .iter()
+                .map(|c| c.vertices.size() + c.indices.size())
+                .sum();
             assert!(count > 0);
             eprintln!(
-                "{resolution}^3: {:?}, {} chunks, {count} vertices, {} MiB",
+                "{resolution}^3: {:?}, {} chunks, {vertex_count} vertices, {count} indices, {} MiB",
                 start.elapsed(),
                 chunks.len(),
-                count * 24 / 1024 / 1024
+                bytes / 1024 / 1024
             );
         }
     }

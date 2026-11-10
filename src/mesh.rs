@@ -407,7 +407,8 @@ impl Mesh {
                 for &index in self.visible.borrow().iter() {
                     let chunk = &self.chunks[index];
                     pass.set_vertex_buffer(0, chunk.vertices.slice(..));
-                    pass.draw(0..chunk.count, 0..1);
+                    pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
+                    pass.draw_indexed(0..chunk.count, 0, 0..1);
                 }
             } else {
                 pass.draw(0..3, 0..1);

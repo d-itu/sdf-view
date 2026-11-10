@@ -6,15 +6,20 @@ struct Params {
 struct Status {
     count: atomic<u32>,
     invalid: atomic<u32>,
+    vertex_count: atomic<u32>,
 }
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read_write> samples: array<f32>;
 @group(0) @binding(2) var<storage, read> triangles: array<i32>;
-@group(0) @binding(3) var<storage, read_write> cells: array<vec2u>;
-@group(0) @binding(4) var<storage, read_write> groups: array<u32>;
+// Per cell: case, local index offset, local vertex offset, owned edge mask.
+@group(0) @binding(3) var<storage, read_write> cells: array<vec4u>;
+// Index and vertex counts become exclusive group offsets after scanning.
+@group(0) @binding(4) var<storage, read_write> groups: array<vec2u>;
 @group(0) @binding(5) var<storage, read_write> status: Status;
 // Scalar storage keeps the raster vertex stride at exactly 24 bytes.
 @group(0) @binding(6) var<storage, read_write> vertices: array<f32>;
+@group(0) @binding(7) var<storage, read_write> edge_vertices: array<u32>;
+@group(0) @binding(8) var<storage, read_write> indices: array<u32>;
 
 const corners = array<vec3u, 8>(
     vec3u(0,0,0), vec3u(1,0,0), vec3u(1,1,0), vec3u(0,1,0),
@@ -23,13 +28,38 @@ const edges = array<vec2u, 12>(
     vec2u(0,1), vec2u(1,2), vec2u(2,3), vec2u(3,0),
     vec2u(4,5), vec2u(5,6), vec2u(6,7), vec2u(7,4),
     vec2u(0,4), vec2u(1,5), vec2u(2,6), vec2u(3,7));
-var<workgroup> prefix: array<u32, 256>;
+var<workgroup> prefix: array<vec2u, 256>;
 
 fn sample_index(p: vec3u) -> u32 {
     return p.x + 35u * (p.y + 35u * p.z);
 }
 fn cell_point(i: u32) -> vec3u {
     return vec3u(i % 32u, (i / 32u) % 32u, i / 1024u);
+}
+
+fn edge_axis(edge: u32) -> u32 {
+    let delta = max(corners[edges[edge].x], corners[edges[edge].y])
+              - min(corners[edges[edge].x], corners[edges[edge].y]);
+    return delta.y + 2u * delta.z;
+}
+
+fn edge_start(p: vec3u, edge: u32) -> vec3u {
+    return p + min(corners[edges[edge].x], corners[edges[edge].y]);
+}
+
+fn edge_index(p: vec3u, edge: u32) -> u32 {
+    let a = edge_start(p, edge);
+    return a.x + 33u * (a.y + 33u * a.z) + 35937u * edge_axis(edge);
+}
+
+fn owns_edge(p: vec3u, edge: u32) -> bool {
+    let a = edge_start(p, edge);
+    // The incident cell with the lowest coordinates owns the edge, including
+    // brick boundaries and partial bricks. No atomics or global welding needed.
+    var owner = a - min(a, vec3u(1u));
+    let axis = edge_axis(edge);
+    owner[axis] = a[axis];
+    return all(owner == p);
 }
 
 @compute @workgroup_size(256)
@@ -45,6 +75,7 @@ fn classify(@builtin(global_invocation_id) id: vec3u,
     let p = cell_point(id.x);
     var mask = 0u;
     var count = 0u;
+    var owned = 0u;
     if all(params.origin.xyz + p < vec3u(params.origin.w)) {
         for (var c = 0u; c < 8u; c++) {
             if samples[sample_index(p + corners[c] + vec3u(1u))] < 0.0 {
@@ -52,32 +83,36 @@ fn classify(@builtin(global_invocation_id) id: vec3u,
             }
         }
         for (var j = 0u; j < 15u; j++) {
-            if triangles[mask * 16u + j] < 0 { break; }
+            let edge = triangles[mask * 16u + j];
+            if edge < 0 { break; }
             count++;
+            if owns_edge(p, u32(edge)) { owned |= 1u << u32(edge); }
         }
     }
-    prefix[lane] = count;
+    let counts = vec2u(count, countOneBits(owned));
+    prefix[lane] = counts;
     workgroupBarrier();
     for (var offset = 1u; offset < 256u; offset *= 2u) {
-        var previous = 0u;
+        var previous = vec2u(0u);
         if lane >= offset { previous = prefix[lane - offset]; }
         workgroupBarrier();
         prefix[lane] += previous;
         workgroupBarrier();
     }
-    cells[id.x] = vec2u(mask, prefix[lane] - count);
+    cells[id.x] = vec4u(mask, prefix[lane] - counts, owned);
     if lane == 255u { groups[group.x] = prefix[lane]; }
 }
 
 @compute @workgroup_size(1)
 fn scan_groups() {
-    var total = 0u;
+    var total = vec2u(0u);
     for (var i = 0u; i < 128u; i++) {
         let count = groups[i];
         groups[i] = total;
         total += count;
     }
-    atomicStore(&status.count, total);
+    atomicStore(&status.count, total.x);
+    atomicStore(&status.vertex_count, total.y);
 }
 
 fn gradient(p: vec3u) -> vec3f {
@@ -99,13 +134,12 @@ fn gradient(p: vec3u) -> vec3f {
 @compute @workgroup_size(256)
 fn generate(@builtin(global_invocation_id) id: vec3u) {
     let cell = cells[id.x];
-    if cell.x == 0u || cell.x == 255u { return; }
+    if cell.w == 0u { return; }
     let p = cell_point(id.x) + vec3u(1u);
-    let start = groups[id.x / 256u] + cell.y;
-    for (var j = 0u; j < 15u; j++) {
-        let edge = triangles[cell.x * 16u + j];
-        if edge < 0 { break; }
-        let ends = edges[u32(edge)];
+    var vertex = groups[id.x / 256u].y + cell.z;
+    for (var edge = 0u; edge < 12u; edge++) {
+        if (cell.w & (1u << edge)) == 0u { continue; }
+        let ends = edges[edge];
         let a = p + min(corners[ends.x], corners[ends.y]);
         let b = p + max(corners[ends.x], corners[ends.y]);
         let da = samples[sample_index(a)];
@@ -125,10 +159,25 @@ fn generate(@builtin(global_invocation_id) id: vec3u) {
         } else {
             normal = vec3f(0.0, 0.0, 1.0);
         }
-        let out = (start + j) * 6u;
+        let out = vertex * 6u;
         for (var axis = 0u; axis < 3u; axis++) {
             vertices[out + axis] = position[axis];
             vertices[out + 3u + axis] = normal[axis];
         }
+        edge_vertices[edge_index(cell_point(id.x), edge)] = vertex;
+        vertex++;
+    }
+}
+
+@compute @workgroup_size(256)
+fn generate_indices(@builtin(global_invocation_id) id: vec3u) {
+    // A preceding dispatch writes every referenced edge, including reused slots.
+    let cell = cells[id.x];
+    if cell.x == 0u || cell.x == 255u { return; }
+    let start = groups[id.x / 256u].x + cell.y;
+    for (var j = 0u; j < 15u; j++) {
+        let edge = triangles[cell.x * 16u + j];
+        if edge < 0 { break; }
+        indices[start + j] = edge_vertices[edge_index(cell_point(id.x), u32(edge))];
     }
 }
