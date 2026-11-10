@@ -49,6 +49,8 @@ pub struct RenderOptions {
     pub camera: Camera,
     pub light: DirectionalLight,
     pub antialiasing: Antialiasing,
+    /// Refine sign-changing ray steps by bisection. Ignored by mesh rendering.
+    pub backtracking: bool,
     pub background: Background,
     /// Linear RGB surface albedo; finite components are clamped to [0, 1].
     pub object_color: [f32; 3],
@@ -62,6 +64,7 @@ impl Default for RenderOptions {
             camera: Camera::default(),
             light: DirectionalLight::default(),
             antialiasing: Antialiasing::default(),
+            backtracking: true,
             background: Background::default(),
             object_color: [137u8, 196, 237]
                 .map(|value| ((f32::from(value) / 255.0 + 0.055) / 1.055).powf(2.4)),

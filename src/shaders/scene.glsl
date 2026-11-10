@@ -14,6 +14,7 @@ layout(set = 0, binding = 0, std140) uniform sdf_view_Scene {
 #define sdf_view_origin sdf_view_scene.origin.xyz
 #define sdf_view_fov_scale sdf_view_scene.origin.w
 #define sdf_view_forward sdf_view_scene.forward.xyz
+#define sdf_view_backtracking (sdf_view_scene.forward.w > 0.5)
 #define sdf_view_right sdf_view_scene.right.xyz
 #define sdf_view_up sdf_view_scene.up.xyz
 #define sdf_view_light_direction sdf_view_scene.light_direction.xyz

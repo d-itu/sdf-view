@@ -52,6 +52,10 @@ struct Args {
     #[arg(long, default_value = "1", value_parser = parse_antialiasing, value_name = "1|4")]
     antialiasing: Antialiasing,
 
+    /// Refine ray-marching steps that cross a surface (ignored with --mesh)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
+    backtracking: bool,
+
     /// Extract a marching-cubes mesh and render it with rasterization
     #[arg(long)]
     mesh: bool,
@@ -215,6 +219,7 @@ impl Args {
             width: self.width,
             height: self.height,
             antialiasing: self.antialiasing,
+            backtracking: self.backtracking,
             camera: Camera {
                 position: self.camera_position,
                 target: self.camera_target,
@@ -391,6 +396,32 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn backtracking_arguments() {
+        for (extra, expected) in [
+            (vec![], true),
+            (vec!["--backtracking"], true),
+            (vec!["--backtracking", "true"], true),
+            (vec!["--backtracking", "false"], false),
+        ] {
+            let mut argv = vec!["sdf-view", "sphere.glsl", "-o", "out.png"];
+            argv.extend(extra);
+            let args = Args::try_parse_from(argv).unwrap();
+            assert_eq!(args.render_options().backtracking, expected);
+        }
+        assert!(
+            Args::try_parse_from([
+                "sdf-view",
+                "sphere.glsl",
+                "-o",
+                "out.png",
+                "--backtracking",
+                "invalid"
+            ])
+            .is_err()
+        );
+    }
 
     #[test]
     #[cfg(feature = "interactive")]

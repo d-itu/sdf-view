@@ -184,8 +184,15 @@ impl App {
                 Antialiasing::X4 => 4,
             };
             preview.window.set_title(&format!(
-                "sdf-view — {} — {samples} sample(s)",
-                self.args.input.display()
+                "sdf-view — {} — {samples} sample(s) — backtracking {}",
+                self.args.input.display(),
+                if self.args.mesh {
+                    "n/a (mesh)"
+                } else if self.args.backtracking {
+                    "on"
+                } else {
+                    "off"
+                }
             ));
             preview.window.request_redraw();
         }
@@ -311,6 +318,11 @@ impl ApplicationHandler for App {
                             Antialiasing::X1 => Antialiasing::X4,
                             Antialiasing::X4 => Antialiasing::X1,
                         };
+                        self.title();
+                        Ok(())
+                    }
+                    Key::Character("b" | "B") if !self.args.mesh => {
+                        self.args.backtracking = !self.args.backtracking;
                         self.title();
                         Ok(())
                     }

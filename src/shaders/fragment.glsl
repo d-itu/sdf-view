@@ -18,13 +18,42 @@ vec4 sdf_view_trace(vec2 pixel) {
         (screen.x * sdf_view_right + screen.y * sdf_view_up));
     vec3 origin = sdf_view_origin;
     float travel = 0.0;
+    float previousTravel = 0.0;
+    float previousDistance = 0.0;
     for (int step = 0; step < 256; ++step) {
         vec3 p = origin + travel * direction;
         float distance = sdf(p);
         if (isnan(distance) || isinf(distance)) {
             break;
         }
-        if (abs(distance) < 0.001) {
+        bool hit = abs(distance) < 0.001;
+        if (sdf_view_backtracking && step > 0 &&
+            ((distance < 0.0) != (previousDistance < 0.0))) {
+            // Keep opposite signs at the endpoints, including rays starting inside.
+            float lower = previousTravel;
+            float upper = travel;
+            for (int refinement = 0; refinement < 24; ++refinement) {
+                travel = 0.5 * (lower + upper);
+                p = origin + travel * direction;
+                distance = sdf(p);
+                if (isnan(distance) || isinf(distance)) {
+                    return vec4(0.0);
+                }
+                if (abs(distance) < 0.001 || upper - lower < 0.001) {
+                    hit = true;
+                    break;
+                }
+                if ((distance < 0.0) == (previousDistance < 0.0)) {
+                    lower = travel;
+                } else {
+                    upper = travel;
+                }
+            }
+            if (!hit) {
+                break;
+            }
+        }
+        if (hit) {
             vec3 normal = sdf_view_normal(p);
             float diffuse = max(dot(normal, sdf_view_light_direction), 0.0);
             vec3 albedo = sdf_view_scene.object_color.rgb;
@@ -33,6 +62,8 @@ vec4 sdf_view_trace(vec2 pixel) {
             return vec4(albedo * illumination, 1.0);
         }
         // Absolute distance also supports cameras inside a closed surface.
+        previousTravel = travel;
+        previousDistance = distance;
         travel += abs(distance);
         if (travel > 100.0) {
             break;

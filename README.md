@@ -47,6 +47,7 @@ Omitting `-o` opens a preview; `-o` renders offline and overwrites the destinati
 | Mouse wheel | Zoom |
 | `Home` | Reset camera |
 | `A` | Toggle 1 / 4 rays per pixel |
+| `B` | Toggle surface backtracking (ray marching only) |
 | `R` | Reload GLSL; keep the last valid scene on failure |
 | `Esc` or close | Exit |
 

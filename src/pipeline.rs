@@ -214,7 +214,12 @@ impl ScenePipeline {
                 options.camera.position[2],
                 (options.camera.vertical_fov_degrees.to_radians() * 0.5).tan(),
             ],
-            [basis.forward[0], basis.forward[1], basis.forward[2], 0.0],
+            [
+                basis.forward[0],
+                basis.forward[1],
+                basis.forward[2],
+                if options.backtracking { 1.0 } else { 0.0 },
+            ],
             [basis.right[0], basis.right[1], basis.right[2], 0.0],
             [basis.up[0], basis.up[1], basis.up[2], 0.0],
             [light[0], light[1], light[2], options.light.intensity],

@@ -29,6 +29,59 @@ fn packed(view: &[u8], width: u32, height: u32) -> Vec<u8> {
 }
 
 #[test]
+fn backtracking_recovers_crossings_from_both_sides() {
+    let mut renderer = Renderer::new().expect("a working graphics adapter is required");
+    // An overestimated distance crosses the plane and then marches away from it.
+    let source = "float sdf(vec3 p) { return 1.5 * p.z; }";
+    for z in [3.0, -3.0] {
+        let options = RenderOptions {
+            width: 1,
+            height: 1,
+            camera: sdf_view::Camera {
+                position: [0.0, 0.0, z],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let recovered = render(&mut renderer, source, options);
+        assert_eq!(recovered.pixels[3], 255, "camera z={z}");
+        let missed = render(
+            &mut renderer,
+            source,
+            RenderOptions {
+                backtracking: false,
+                ..options
+            },
+        );
+        assert_eq!(missed.pixels[3], 0, "camera z={z}");
+    }
+
+    // Refinement must shade the entry surface, not the far side of the sphere.
+    let options = RenderOptions {
+        width: 1,
+        height: 1,
+        light: sdf_view::DirectionalLight {
+            direction: [0.0, 0.0, 1.0],
+            intensity: 1.0,
+            ambient: 0.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let reference = render(
+        &mut renderer,
+        "float sdf(vec3 p) { return length(p) - 1.0; }",
+        options,
+    );
+    let recovered = render(
+        &mut renderer,
+        "float sdf(vec3 p) { return 1.25 * (length(p) - 1.0); }",
+        options,
+    );
+    assert_eq!(recovered.pixels, reference.pixels);
+}
+
+#[test]
 fn antialiasing_preserves_straight_alpha() {
     use sdf_view::{Antialiasing, DirectionalLight};
 
