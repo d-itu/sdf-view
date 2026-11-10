@@ -29,6 +29,8 @@ const edges = array<vec2u, 12>(
     vec2u(4,5), vec2u(5,6), vec2u(6,7), vec2u(7,4),
     vec2u(0,4), vec2u(1,5), vec2u(2,6), vec2u(3,7));
 var<workgroup> prefix: array<vec2u, 256>;
+var<workgroup> occupied: atomic<u32>;
+var<workgroup> group_occupied: u32;
 
 fn sample_index(p: vec3u) -> u32 {
     return p.x + 35u * (p.y + 35u * p.z);
@@ -52,16 +54,6 @@ fn edge_index(p: vec3u, edge: u32) -> u32 {
     return a.x + 33u * (a.y + 33u * a.z) + 35937u * edge_axis(edge);
 }
 
-fn owns_edge(p: vec3u, edge: u32) -> bool {
-    let a = edge_start(p, edge);
-    // The incident cell with the lowest coordinates owns the edge, including
-    // brick boundaries and partial bricks. No atomics or global welding needed.
-    var owner = a - min(a, vec3u(1u));
-    let axis = edge_axis(edge);
-    owner[axis] = a[axis];
-    return all(owner == p);
-}
-
 @compute @workgroup_size(256)
 fn classify(@builtin(global_invocation_id) id: vec3u,
             @builtin(local_invocation_index) lane: u32,
@@ -82,16 +74,25 @@ fn classify(@builtin(global_invocation_id) id: vec3u,
                 mask |= 1u << c;
             }
         }
-        for (var j = 0u; j < 15u; j++) {
-            let edge = triangles[mask * 16u + j];
-            if edge < 0 { break; }
-            count++;
-            if owns_edge(p, u32(edge)) { owned |= 1u << u32(edge); }
-        }
+        // Metadata follows the 256 x 16 triangle table. The lowest incident
+        // cell owns each edge; only cells on a brick's low faces need extra edges.
+        let info = u32(triangles[4096u + mask]);
+        let boundary = u32(p.x == 0u) | (u32(p.y == 0u) << 1u) | (u32(p.z == 0u) << 2u);
+        count = info & 15u;
+        owned = (info >> 4u) & u32(triangles[4352u + boundary]);
     }
     let counts = vec2u(count, countOneBits(owned));
     prefix[lane] = counts;
+    if count != 0u { atomicOr(&occupied, 1u); }
     workgroupBarrier();
+    if lane == 0u { group_occupied = atomicLoad(&occupied); }
+    // Uniform load makes the early exit safe around subsequent scan barriers.
+    // Sampling and finite-value validation still cover every brick and halo.
+    if workgroupUniformLoad(&group_occupied) == 0u {
+        cells[id.x] = vec4u(mask, 0u, 0u, 0u);
+        if lane == 0u { groups[group.x] = vec2u(0u); }
+        return;
+    }
     for (var offset = 1u; offset < 256u; offset *= 2u) {
         var previous = vec2u(0u);
         if lane >= offset { previous = prefix[lane - offset]; }

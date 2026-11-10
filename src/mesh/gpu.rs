@@ -4,7 +4,7 @@ use futures::{channel::oneshot, executor::block_on};
 use marching_cubes::tables::TRI_TABLE;
 use wgpu::util::DeviceExt;
 
-use super::MeshOptions;
+use super::{CORNERS, EDGES, MeshOptions};
 use crate::{Error, MeshError};
 
 const BRICK: u32 = 32;
@@ -79,7 +79,7 @@ fn dispatch(
     pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
 }
 
-fn readback(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Result<Vec<u32>, Error> {
+pub(super) fn readback(device: &wgpu::Device, buffer: &wgpu::Buffer) -> Result<Vec<u32>, Error> {
     let (sender, receiver) = oneshot::channel();
     buffer
         .slice(..)
@@ -211,10 +211,35 @@ pub(super) fn extract(
     if let Some(error) = block_on(scope.pop()) {
         return Err(error.into());
     }
+    // Append packed case metadata and the eight brick-boundary ownership masks.
+    // This avoids scanning triangle lists or recomputing edge ownership per cell.
+    let metadata = TRI_TABLE.iter().map(|row| {
+        let mut count = 0u32;
+        let mut edges = 0u32;
+        for &edge in row.iter().take_while(|&&edge| edge >= 0) {
+            count += 1;
+            edges |= 1 << edge;
+        }
+        count | (edges << 4)
+    });
+    let ownership = (0..8).map(|boundary| {
+        EDGES
+            .iter()
+            .enumerate()
+            .fold(0u32, |mask, (edge, &[a, b])| {
+                let owns = (0..3).all(|axis| {
+                    CORNERS[a][axis] != CORNERS[b][axis]
+                        || CORNERS[a][axis] == 1
+                        || boundary & (1 << axis) != 0
+                });
+                mask | (u32::from(owns) << edge)
+            })
+    });
     let table_bytes: Vec<_> = TRI_TABLE
         .iter()
         .flatten()
         .flat_map(|&edge| (edge as i32).to_ne_bytes())
+        .chain(metadata.chain(ownership).flat_map(u32::to_ne_bytes))
         .collect();
     let table = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
         label: Some("marching cubes table"),
@@ -622,6 +647,41 @@ mod tests {
             options,
             |[x, y, z]| x + 2.0 * y + 3.0 * z - 191.5,
         );
+    }
+
+    #[test]
+    fn empty_groups_preserve_validation_across_batches() {
+        let renderer = Renderer::new().unwrap();
+        let options = MeshOptions {
+            min: [0.0; 3],
+            max: [65.0; 3],
+            resolution: 65,
+        };
+        for value in ["-1.0", "0.0", "1.0"] {
+            assert!(
+                extract(
+                    renderer.device(),
+                    renderer.queue(),
+                    &format!("float sdf(vec3 p) {{ return {value}; }}"),
+                    options
+                )
+                .unwrap()
+                .is_empty()
+            );
+        }
+        // The last partial brick in a later batch has no surface but is invalid.
+        assert!(matches!(
+            extract(
+                renderer.device(),
+                renderer.queue(),
+                "float sdf(vec3 p) {
+                if (all(greaterThan(p, vec3(64.5)))) return uintBitsToFloat(0x7fc00000u);
+                return 1.0;
+            }",
+                options
+            ),
+            Err(Error::Mesh(MeshError::NonFiniteSamples))
+        ));
     }
 
     #[test]

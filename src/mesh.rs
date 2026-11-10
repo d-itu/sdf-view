@@ -43,7 +43,6 @@ impl MeshOptions {
     }
 }
 
-#[cfg(all(test, feature = "gpu-test"))]
 const CORNERS: [[usize; 3]; 8] = [
     [0, 0, 0],
     [1, 0, 0],
@@ -54,7 +53,6 @@ const CORNERS: [[usize; 3]; 8] = [
     [1, 1, 1],
     [0, 1, 1],
 ];
-#[cfg(all(test, feature = "gpu-test"))]
 const EDGES: [[usize; 2]; 12] = [
     [0, 1],
     [1, 2],
@@ -197,6 +195,8 @@ pub(crate) struct Mesh {
     bind: wgpu::BindGroup,
     targets: RefCell<Option<Targets>>,
     visible: RefCell<Vec<usize>>,
+    #[cfg(all(test, feature = "gpu-test"))]
+    unindexed: bool,
 }
 
 impl Mesh {
@@ -287,6 +287,8 @@ impl Mesh {
             bind,
             targets: RefCell::new(None),
             visible: RefCell::new(Vec::new()),
+            #[cfg(all(test, feature = "gpu-test"))]
+            unindexed: false,
         })
     }
 
@@ -407,6 +409,11 @@ impl Mesh {
                 for &index in self.visible.borrow().iter() {
                     let chunk = &self.chunks[index];
                     pass.set_vertex_buffer(0, chunk.vertices.slice(..));
+                    #[cfg(all(test, feature = "gpu-test"))]
+                    if self.unindexed {
+                        pass.draw(0..chunk.count, 0..1);
+                        continue;
+                    }
                     pass.set_index_buffer(chunk.indices.slice(..), wgpu::IndexFormat::Uint32);
                     pass.draw_indexed(0..chunk.count, 0, 0..1);
                 }
@@ -416,6 +423,9 @@ impl Mesh {
         }
     }
 }
+
+#[cfg(all(test, feature = "gpu-test"))]
+mod benchmarks;
 
 #[cfg(test)]
 mod settings_tests {
