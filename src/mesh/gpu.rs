@@ -735,6 +735,7 @@ mod tests {
     #[test]
     #[ignore = "large GPU workload; run explicitly in release mode"]
     fn large_mesh_sampling() {
+        let sdf = super::super::benchmarks::model();
         let renderer = Renderer::new().unwrap();
         eprintln!("Adapter: {:?}", renderer.adapter_info());
         for resolution in [512, 1024, 2048] {
@@ -743,13 +744,7 @@ mod tests {
                 resolution,
                 ..Default::default()
             };
-            let chunks = extract(
-                renderer.device(),
-                renderer.queue(),
-                "float sdf(vec3 p) { return length(p)-1.0; }",
-                options,
-            )
-            .unwrap();
+            let chunks = extract(renderer.device(), renderer.queue(), sdf, options).unwrap();
             renderer
                 .device()
                 .poll(wgpu::PollType::wait_indefinitely())

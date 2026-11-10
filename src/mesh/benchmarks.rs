@@ -1,7 +1,20 @@
-use std::time::{Duration, Instant};
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 
 use super::*;
 use crate::Renderer;
+
+pub(super) fn model() -> &'static str {
+    match env::var("SDF_BENCHMARK_MODEL").as_deref() {
+        Err(env::VarError::NotPresent) | Ok("sphere") => {
+            "float sdf(vec3 p) { return length(p)-1.0; }"
+        }
+        Ok("jetfighter") => include_str!("../../examples/jetfighter.glsl"),
+        other => panic!("unsupported SDF_BENCHMARK_MODEL: {other:?}"),
+    }
+}
 
 // Expand entirely on the GPU, outside the measured interval, to reproduce the
 // former non-indexed draw with identical triangle order, positions and normals.
@@ -131,6 +144,7 @@ fn measure(mesh: &Mesh, queue: &wgpu::Queue, view: &wgpu::TextureView) -> Durati
 #[test]
 #[ignore = "rendering benchmark; run explicitly in release mode"]
 fn mesh_rendering() {
+    let sdf = model();
     let renderer = Renderer::new().unwrap();
     let device = renderer.device();
     let queue = renderer.queue();
@@ -145,7 +159,7 @@ fn mesh_rendering() {
         let mut mesh = Mesh::new(
             device,
             queue,
-            "float sdf(vec3 p) { return length(p)-1.0; }",
+            sdf,
             wgpu::TextureFormat::Rgba8UnormSrgb,
             MeshOptions {
                 resolution,
