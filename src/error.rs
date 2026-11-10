@@ -39,7 +39,7 @@ pub enum MeshError {
 /// Invalid dimensions, camera settings, or lighting parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SettingsError {
-    #[error("mesh requires 2..=256 cells per axis and finite, increasing bounds")]
+    #[error("mesh requires at least 2 cells per axis and finite, increasing bounds")]
     InvalidMesh,
     /// Either image dimension is zero.
     #[error("width and height must be nonzero")]

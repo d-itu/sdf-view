@@ -92,10 +92,6 @@ fn invalid_mesh_settings() {
             ..Default::default()
         },
         MeshOptions {
-            resolution: 257,
-            ..Default::default()
-        },
-        MeshOptions {
             min: [2.0; 3],
             ..Default::default()
         },

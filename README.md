@@ -55,7 +55,7 @@ pixels; resizing updates the view. Transparent windows require compositor suppor
 | `--width`, `--height` | `512`, positive pixels within device limits |
 | `--antialiasing` | `1` or `4` rays per pixel; default `1` |
 | `--mesh` | Extract a marching-cubes mesh and rasterize it instead of sphere tracing |
-| `--mesh-resolution` | `64` cells per axis; accepts `2`–`256`, requires `--mesh` |
+| `--mesh-resolution` | `64` cells per axis; accepts `2` or more (up to the `u32` limit), subject to processing time, numerical precision, and available memory; requires `--mesh` |
 | `--mesh-min`, `--mesh-max` | `-2,-2,-2`, `2,2,2`; world-space sampling bounds, requires `--mesh` |
 | `--background` | `transparent` (default), `checkerboard`, or a color |
 | `--object-color` | `rgb(137,196,237)` |
@@ -73,11 +73,15 @@ in right-handed coordinates. Camera position and target must differ; up must be
 nonzero and not parallel to the viewing direction. Light direction must be nonzero.
 Four-ray antialiasing smooths silhouettes with partial transparency.
 
-Mesh mode samples the GLSL SDF on the GPU, extracts the zero isosurface with
-marching cubes on the CPU, and uploads triangles for depth-tested GPU rasterization.
+Mesh mode samples the GLSL SDF and extracts the zero isosurface with marching cubes
+on the GPU. Generated vertex buffers are used directly for depth-tested rasterization.
 Only surfaces within the sampling bounds are extracted; adjust the bounds for
 larger or translated objects. Increasing resolution captures finer features at
-the cost of cubic sampling work and memory. Nonfinite SDF samples are rejected.
+the cost of cubic sampling work. Sampling runs in batches of eight 32-cubed-cell
+bricks with a one-sample halo for continuous gradients across brick boundaries.
+Reusable compute buffers occupy approximately 3.4 MiB regardless of resolution;
+only vertex counts and error flags are read back to the CPU during extraction.
+
 Meshes are reused while moving the camera and rebuilt when pressing `R`.
 Lighting uses interpolated SDF gradients. Four-sample antialiasing uses a 2-by-2
 supersampled raster target and preserves transparent coverage.

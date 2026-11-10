@@ -233,6 +233,32 @@ fn renders_png_and_reports_runtime_errors() {
         assert_eq!(pixels[center + 3], 255);
     }
 
+    let output = workspace.run(&[
+        "sphere.glsl",
+        "-o",
+        "mesh.png",
+        "--mesh",
+        "--mesh-resolution",
+        "257",
+        "--width",
+        "32",
+        "--height",
+        "32",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut reader = png::Decoder::new(BufReader::new(
+        fs::File::open(workspace.0.join("mesh.png")).unwrap(),
+    ))
+    .read_info()
+    .unwrap();
+    let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+    reader.next_frame(&mut pixels).unwrap();
+    assert_eq!(pixels[(16 * 32 + 16) * 4 + 3], 255);
+    assert_eq!(pixels[3], 0);
     fs::write(
         workspace.0.join("empty.glsl"),
         "float sdf(vec3 p) { return 200.0; }",

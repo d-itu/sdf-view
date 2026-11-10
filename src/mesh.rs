@@ -1,8 +1,10 @@
-use std::{borrow::Cow, cell::RefCell};
+use std::cell::RefCell;
 
-use futures::{channel::oneshot, executor::block_on};
+use futures::executor::block_on;
+#[cfg(all(test, feature = "gpu-test"))]
 use marching_cubes::tables::TRI_TABLE;
-use wgpu::util::DeviceExt;
+
+mod gpu;
 
 use crate::{Antialiasing, Error, MeshError, RenderOptions, SettingsError};
 
@@ -26,12 +28,13 @@ impl Default for MeshOptions {
 
 impl MeshOptions {
     pub fn validate(&self) -> Result<(), SettingsError> {
-        if !(2..=256).contains(&self.resolution)
+        if self.resolution < 2
             || !(0..3).all(|i| {
                 self.min[i].is_finite()
                     && self.max[i].is_finite()
                     && self.min[i] < self.max[i]
                     && (self.max[i] - self.min[i]).is_finite()
+                    && (self.max[i] - self.min[i]) / self.resolution as f32 > 0.0
             })
         {
             return Err(SettingsError::InvalidMesh);
@@ -40,124 +43,7 @@ impl MeshOptions {
     }
 }
 
-fn sample(
-    device: &wgpu::Device,
-    queue: &wgpu::Queue,
-    sdf: &str,
-    options: MeshOptions,
-) -> Result<Vec<f32>, Error> {
-    let n = options.resolution + 1;
-    let size = u64::from(n).pow(3) * 4;
-    if size > device.limits().max_storage_buffer_binding_size
-        || size > device.limits().max_buffer_size
-    {
-        return Err(MeshError::SamplingBufferLimit.into());
-    }
-    let source = format!(
-        "#version 450\nlayout(local_size_x=4,local_size_y=4,local_size_z=4) in;\n\
-         layout(set=0,binding=0,std430) buffer Samples {{ float values[]; }} sdf_view_samples;\n\
-         #line 1 1\n{sdf}\n#line 1 0\n\
-         void main() {{ uvec3 q=gl_GlobalInvocationID; if(any(greaterThanEqual(q,uvec3({n}u)))) return;\n\
-         vec3 lo=vec3({:?},{:?},{:?}); vec3 hi=vec3({:?},{:?},{:?});\n\
-         sdf_view_samples.values[q.x+{n}u*(q.y+{n}u*q.z)]=sdf(mix(lo,hi,vec3(q)/float({}))); }}",
-        options.min[0],
-        options.min[1],
-        options.min[2],
-        options.max[0],
-        options.max[1],
-        options.max[2],
-        options.resolution
-    );
-    let module = wgpu::naga::front::glsl::Frontend::default()
-        .parse(
-            &wgpu::naga::front::glsl::Options::from(wgpu::naga::ShaderStage::Compute),
-            &source,
-        )
-        .map_err(|error| {
-            Error::Gpu(wgpu::Error::Validation {
-                description: error.emit_to_string(&source),
-                source: Box::new(error),
-            })
-        })?;
-    if module
-        .global_variables
-        .iter()
-        .filter(|(_, v)| v.binding.is_some())
-        .count()
-        != 1
-    {
-        return Err(MeshError::ResourceBindings.into());
-    }
-    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("mesh SDF sampling"),
-        source: wgpu::ShaderSource::Naga(Cow::Owned(module)),
-    });
-    if let Some(error) = block_on(scope.pop()) {
-        return Err(error.into());
-    }
-    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("mesh sampling"),
-        layout: None,
-        module: &shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    if let Some(error) = block_on(scope.pop()) {
-        return Err(error.into());
-    }
-    let storage = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("mesh samples"),
-        size,
-        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
-        mapped_at_creation: false,
-    });
-    let readback = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("mesh samples readback"),
-        size,
-        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
-    let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: None,
-        layout: &pipeline.get_bind_group_layout(0),
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: storage.as_entire_binding(),
-        }],
-    });
-    let mut encoder = device.create_command_encoder(&Default::default());
-    {
-        let mut pass = encoder.begin_compute_pass(&Default::default());
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &bind, &[]);
-        pass.dispatch_workgroups(n.div_ceil(4), n.div_ceil(4), n.div_ceil(4));
-    }
-    encoder.copy_buffer_to_buffer(&storage, 0, &readback, 0, size);
-    queue.submit([encoder.finish()]);
-    let (sender, receiver) = oneshot::channel();
-    readback
-        .slice(..)
-        .map_async(wgpu::MapMode::Read, move |result| {
-            let _ = sender.send(result);
-        });
-    device.poll(wgpu::PollType::wait_indefinitely())?;
-    block_on(receiver).unwrap()?;
-    let mapped = readback.slice(..).get_mapped_range()?;
-    let values: Vec<_> = mapped
-        .as_chunks::<4>()
-        .0
-        .iter()
-        .map(|v| f32::from_ne_bytes(*v))
-        .collect();
-    if values.iter().any(|v| !v.is_finite()) {
-        return Err(MeshError::NonFiniteSamples.into());
-    }
-    Ok(values)
-}
-
+#[cfg(all(test, feature = "gpu-test"))]
 const CORNERS: [[usize; 3]; 8] = [
     [0, 0, 0],
     [1, 0, 0],
@@ -168,6 +54,7 @@ const CORNERS: [[usize; 3]; 8] = [
     [1, 1, 1],
     [0, 1, 1],
 ];
+#[cfg(all(test, feature = "gpu-test"))]
 const EDGES: [[usize; 2]; 12] = [
     [0, 1],
     [1, 2],
@@ -183,7 +70,8 @@ const EDGES: [[usize; 2]; 12] = [
     [3, 7],
 ];
 
-fn polygonize(values: &[f32], options: MeshOptions, max_bytes: u64) -> Result<Vec<u8>, Error> {
+#[cfg(all(test, feature = "gpu-test"))]
+fn polygonize(values: &[f32], options: MeshOptions) -> Vec<u8> {
     let r = options.resolution as usize;
     let n = r + 1;
     let index = |p: [usize; 3]| p[0] + n * (p[1] + n * p[2]);
@@ -215,9 +103,6 @@ fn polygonize(values: &[f32], options: MeshOptions, max_bytes: u64) -> Result<Ve
                     normal
                 });
                 for &edge in TRI_TABLE[case].iter().take_while(|&&e| e >= 0) {
-                    if vertices.len() as u64 + 24 > max_bytes {
-                        return Err(MeshError::VertexBufferLimit.into());
-                    }
                     let [a, b] = EDGES[edge as usize];
                     let t = (f64::from(distances[a])
                         / (f64::from(distances[a]) - f64::from(distances[b])))
@@ -243,7 +128,7 @@ fn polygonize(values: &[f32], options: MeshOptions, max_bytes: u64) -> Result<Ve
             }
         }
     }
-    Ok(vertices)
+    vertices
 }
 
 struct Targets {
@@ -256,8 +141,7 @@ struct Targets {
 pub(crate) struct Mesh {
     device: wgpu::Device,
     uniform: wgpu::Buffer,
-    vertices: wgpu::Buffer,
-    count: u32,
+    chunks: Vec<gpu::Chunk>,
     raster: wgpu::RenderPipeline,
     composite: wgpu::RenderPipeline,
     bind: wgpu::BindGroup,
@@ -273,21 +157,7 @@ impl Mesh {
         options: MeshOptions,
         uniform: &wgpu::Buffer,
     ) -> Result<Self, Error> {
-        let values = sample(device, queue, sdf, options)?;
-        let bytes = polygonize(
-            &values,
-            options,
-            device
-                .limits()
-                .max_buffer_size
-                .min(u64::from(u32::MAX) * 24),
-        )?;
-        let count = (bytes.len() / 24) as u32;
-        let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("marching cubes vertices"),
-            contents: if bytes.is_empty() { &[0; 24] } else { &bytes },
-            usage: wgpu::BufferUsages::VERTEX,
-        });
+        let chunks = gpu::extract(device, queue, sdf, options)?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("mesh rasterization"),
@@ -360,8 +230,7 @@ impl Mesh {
         Ok(Self {
             device: device.clone(),
             uniform: uniform.clone(),
-            vertices,
-            count,
+            chunks,
             raster,
             composite,
             bind,
@@ -474,9 +343,51 @@ impl Mesh {
             pass.set_pipeline(if mesh { &self.raster } else { &self.composite });
             pass.set_bind_group(0, if mesh { &self.bind } else { &targets.bind }, &[]);
             if mesh {
-                pass.set_vertex_buffer(0, self.vertices.slice(..));
+                for chunk in &self.chunks {
+                    pass.set_vertex_buffer(0, chunk.vertices.slice(..));
+                    pass.draw(0..chunk.count, 0..1);
+                }
+            } else {
+                pass.draw(0..3, 0..1);
             }
-            pass.draw(0..if mesh { self.count } else { 3 }, 0..1);
         }
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn validates_large_grids_without_a_device() {
+        for resolution in [2, 257, 512, 1024, 1_048_577, u32::MAX] {
+            assert!(
+                MeshOptions {
+                    resolution,
+                    ..Default::default()
+                }
+                .validate()
+                .is_ok()
+            );
+        }
+        for resolution in [0, 1] {
+            assert!(
+                MeshOptions {
+                    resolution,
+                    ..Default::default()
+                }
+                .validate()
+                .is_err()
+            );
+        }
+        assert!(
+            MeshOptions {
+                min: [0.0; 3],
+                max: [f32::from_bits(1); 3],
+                ..Default::default()
+            }
+            .validate()
+            .is_err()
+        );
     }
 }

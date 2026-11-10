@@ -49,6 +49,16 @@ impl Error {
     }
 }
 
+#[derive(Debug, thiserror::Error, Clone, Copy)]
+#[error(
+    "expected transparent, checkerboard, black, white, or rgb(r,g,b) with integer components in 0..=255"
+)]
+pub(crate) struct InvalidBackground;
+
+#[derive(Debug, thiserror::Error, Clone, Copy)]
+#[error("expected black, white, or rgb(r,g,b) with integer components in 0..=255")]
+pub(crate) struct InvalidColor;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,13 +77,3 @@ mod tests {
         );
     }
 }
-
-#[derive(Debug, thiserror::Error, Clone, Copy)]
-#[error(
-    "expected transparent, checkerboard, black, white, or rgb(r,g,b) with integer components in 0..=255"
-)]
-pub(crate) struct InvalidBackground;
-
-#[derive(Debug, thiserror::Error, Clone, Copy)]
-#[error("expected black, white, or rgb(r,g,b) with integer components in 0..=255")]
-pub(crate) struct InvalidColor;

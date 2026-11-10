@@ -346,13 +346,10 @@ mod tests {
             "out.png",
             "--mesh",
             "--mesh-resolution",
-            "257",
+            "1048577",
         ])
         .unwrap();
-        assert_eq!(
-            args.mesh_options().validate(),
-            Err(sdf_view::SettingsError::InvalidMesh)
-        );
+        assert!(args.mesh_options().validate().is_ok());
     }
 
     #[test]
