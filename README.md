@@ -17,6 +17,8 @@ float sdf(vec3 p) {
 - Names starting with `sdf_view_` are reserved.
 - Shaders should be NAGA compatible.
 
+### Example
+
 ```sh
 sdf-view sphere.glsl                                     # Interactive preview
 sdf-view sphere.glsl -o sphere.png --antialiasing 4      # Save PNG
@@ -28,6 +30,8 @@ sdf-view --help
 ```
 
 Use `cargo run --` in place of `sdf-view` to run from source.
+
+### Interactive Mode
 
 Omitting `-o` opens a preview; `-o` renders offline and overwrites the destination.
 `-i` explicitly selects preview mode and conflicts with `-o`.
