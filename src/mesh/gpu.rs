@@ -376,11 +376,16 @@ pub(super) fn extract(
         }
         queue.submit([encoder.finish()]);
         let results = readback(device, &counts)?;
+        // Validate every active brick before skipping batches with no output.
+        let statuses = &results.as_chunks::<3>().0[..active];
+        if statuses.iter().any(|status| status[1] != 0) {
+            return Err(MeshError::NonFiniteSamples.into());
+        }
+        if statuses.iter().all(|status| status[0] == 0) {
+            continue;
+        }
         let mut encoder = device.create_command_encoder(&Default::default());
         for (i, slot) in slots[..active].iter().enumerate() {
-            if results[i * 3 + 1] != 0 {
-                return Err(MeshError::NonFiniteSamples.into());
-            }
             let count = results[i * 3];
             if count == 0 {
                 continue;

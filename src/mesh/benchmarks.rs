@@ -110,27 +110,22 @@ fn image(mesh: &Mesh, queue: &wgpu::Queue, texture: &wgpu::Texture) -> Vec<u8> {
 }
 
 fn measure(mesh: &Mesh, queue: &wgpu::Queue, view: &wgpu::TextureView) -> Duration {
-    // Warm up, then report the median of five batches. This measures CPU command
-    // recording/submission plus GPU completion, not isolated GPU timestamp time.
+    // Warm each variant before measuring one batch. Variant order is balanced
+    // by the caller; elapsed time includes CPU submission and GPU completion.
     for _ in 0..5 {
         frame(mesh, queue, view);
     }
     mesh.device
         .poll(wgpu::PollType::wait_indefinitely())
         .unwrap();
-    let mut timings = Vec::new();
-    for _ in 0..5 {
-        let start = Instant::now();
-        for _ in 0..20 {
-            frame(mesh, queue, view);
-        }
-        mesh.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .unwrap();
-        timings.push(start.elapsed() / 20);
+    let start = Instant::now();
+    for _ in 0..20 {
+        frame(mesh, queue, view);
     }
-    timings.sort();
-    timings[2]
+    mesh.device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    start.elapsed() / 20
 }
 
 #[test]
@@ -209,20 +204,42 @@ fn mesh_rendering() {
                 let visible = mesh.visible.borrow().len();
                 let reference = image(&mesh, queue, &texture);
                 assert!(reference.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
-                let indexed = measure(&mesh, queue, &view);
-                for (chunk, buffer) in mesh.chunks.iter_mut().zip(&expanded) {
-                    chunk.vertices = buffer.clone();
+                let culled = mesh.visible.borrow().clone();
+                let mut timings = [Vec::new(), Vec::new(), Vec::new()];
+                // Each variant occupies each position twice, with both orders
+                // of the other variants represented. Validate outside timing.
+                for order in [
+                    [0, 1, 2],
+                    [1, 2, 0],
+                    [2, 0, 1],
+                    [2, 1, 0],
+                    [1, 0, 2],
+                    [0, 2, 1],
+                ] {
+                    for variant in order {
+                        mesh.unindexed = variant == 1;
+                        let buffers = if mesh.unindexed { &expanded } else { &shared };
+                        for (chunk, buffer) in mesh.chunks.iter_mut().zip(buffers) {
+                            chunk.vertices = buffer.clone();
+                        }
+                        *mesh.visible.borrow_mut() = if variant == 2 {
+                            (0..mesh.chunks.len()).collect()
+                        } else {
+                            culled.clone()
+                        };
+                        assert_eq!(image(&mesh, queue, &texture), reference);
+                        timings[variant].push(measure(&mesh, queue, &view));
+                    }
                 }
-                mesh.unindexed = true;
-                assert_eq!(image(&mesh, queue, &texture), reference);
-                let unindexed = measure(&mesh, queue, &view);
                 for (chunk, buffer) in mesh.chunks.iter_mut().zip(&shared) {
                     chunk.vertices = buffer.clone();
                 }
                 mesh.unindexed = false;
-                *mesh.visible.borrow_mut() = (0..mesh.chunks.len()).collect();
-                assert_eq!(image(&mesh, queue, &texture), reference);
-                let unculled = measure(&mesh, queue, &view);
+                *mesh.visible.borrow_mut() = culled;
+                let [indexed, unindexed, unculled] = timings.map(|mut times| {
+                    times.sort();
+                    (times[2] + times[3]) / 2
+                });
                 eprintln!(
                     "grid={resolution} image={width} {name}: {visible}/{} chunks; indexed={indexed:?}, expanded={unindexed:?}, indexed without culling={unculled:?}",
                     mesh.chunks.len()
