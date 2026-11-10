@@ -47,6 +47,40 @@ fn mesh_rasterization_and_recovery() {
             "depth test and outward normals must match the visible sphere surface"
         );
     }
+    // Culling must update when only the camera changes, without a target resize.
+    let hidden = renderer
+        .render_with_pipeline(
+            &pipeline,
+            RenderOptions {
+                camera: sdf_view::Camera {
+                    target: [0.0, 0.0, 4.0],
+                    ..options.camera
+                },
+                ..options
+            },
+        )
+        .unwrap();
+    assert!(hidden.iter().all(|&v| v == 0));
+    assert_eq!(
+        &renderer.render_with_pipeline(&pipeline, options).unwrap()[..],
+        &image[..]
+    );
+    let side = RenderOptions {
+        camera: sdf_view::Camera {
+            position: [3.0, 0.0, 0.0],
+            ..options.camera
+        },
+        ..options
+    };
+    let side_image = renderer.render_with_pipeline(&pipeline, side).unwrap();
+    let side_traced = renderer
+        .render("float sdf(vec3 p) { return length(p) - 1.0; }", side)
+        .unwrap();
+    let center_offset = 32 * 256 + 32 * 4;
+    assert_eq!(side_image[center_offset + 3], 255);
+    for i in 0..3 {
+        assert!(side_image[center_offset + i].abs_diff(side_traced[center_offset + i]) <= 3);
+    }
     let aa = renderer
         .render_with_pipeline(
             &pipeline,

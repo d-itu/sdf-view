@@ -138,6 +138,56 @@ struct Targets {
     bind: wgpu::BindGroup,
 }
 
+struct Frustum {
+    origin: [f64; 3],
+    planes: [([f64; 3], f64); 6],
+}
+
+impl Frustum {
+    fn new(options: RenderOptions) -> Result<Self, SettingsError> {
+        let basis = options.camera.basis()?;
+        let forward = basis.forward.map(f64::from);
+        // Match the f32 projection used by the vertex shader.
+        let vertical = (options.camera.vertical_fov_degrees.to_radians() * 0.5).tan();
+        let horizontal = vertical * options.width as f32 / options.height as f32;
+        let side = |axis: [f32; 3], slope: f32, sign: f64| {
+            (
+                [0, 1, 2].map(|i| forward[i] * f64::from(slope) + sign * f64::from(axis[i])),
+                0.0,
+            )
+        };
+        Ok(Self {
+            origin: options.camera.position.map(f64::from),
+            planes: [
+                side(basis.right, horizontal, 1.0),
+                side(basis.right, horizontal, -1.0),
+                side(basis.up, vertical, 1.0),
+                side(basis.up, vertical, -1.0),
+                (forward, -0.001),
+                (forward.map(|v| -v), 10000.0),
+            ],
+        })
+    }
+
+    fn intersects(&self, min: [f32; 3], max: [f32; 3]) -> bool {
+        self.planes.iter().all(|&(normal, offset)| {
+            let mut distance = offset;
+            let mut magnitude = offset.abs();
+            for axis in 0..3 {
+                let point = f64::from(if normal[axis] >= 0.0 {
+                    max[axis]
+                } else {
+                    min[axis]
+                });
+                distance += normal[axis] * (point - self.origin[axis]);
+                magnitude += normal[axis].abs() * (point.abs() + self.origin[axis].abs());
+            }
+            // Keep boundary bricks despite CPU/GPU floating-point rounding differences.
+            distance >= -1e-5 * magnitude.max(1.0)
+        })
+    }
+}
+
 pub(crate) struct Mesh {
     device: wgpu::Device,
     uniform: wgpu::Buffer,
@@ -146,6 +196,7 @@ pub(crate) struct Mesh {
     composite: wgpu::RenderPipeline,
     bind: wgpu::BindGroup,
     targets: RefCell<Option<Targets>>,
+    visible: RefCell<Vec<usize>>,
 }
 
 impl Mesh {
@@ -235,10 +286,12 @@ impl Mesh {
             composite,
             bind,
             targets: RefCell::new(None),
+            visible: RefCell::new(Vec::new()),
         })
     }
 
     pub(crate) fn update(&self, options: RenderOptions) -> Result<(), Error> {
+        let frustum = Frustum::new(options)?;
         let scale = if options.antialiasing == Antialiasing::X4 {
             2
         } else {
@@ -257,6 +310,14 @@ impl Mesh {
         {
             return Err(MeshError::TextureDimensionLimit.into());
         }
+        let mut visible = self.visible.borrow_mut();
+        visible.clear();
+        visible.extend(
+            self.chunks
+                .iter()
+                .enumerate()
+                .filter_map(|(i, chunk)| frustum.intersects(chunk.min, chunk.max).then_some(i)),
+        );
         let mut targets = self.targets.borrow_mut();
         if targets
             .as_ref()
@@ -343,7 +404,8 @@ impl Mesh {
             pass.set_pipeline(if mesh { &self.raster } else { &self.composite });
             pass.set_bind_group(0, if mesh { &self.bind } else { &targets.bind }, &[]);
             if mesh {
-                for chunk in &self.chunks {
+                for &index in self.visible.borrow().iter() {
+                    let chunk = &self.chunks[index];
                     pass.set_vertex_buffer(0, chunk.vertices.slice(..));
                     pass.draw(0..chunk.count, 0..1);
                 }
@@ -357,6 +419,53 @@ impl Mesh {
 #[cfg(test)]
 mod settings_tests {
     use super::*;
+
+    #[test]
+    fn frustum_conservatively_rejects_only_outside_bounds() {
+        let options = RenderOptions {
+            width: 100,
+            height: 100,
+            camera: crate::Camera {
+                position: [0.0; 3],
+                target: [0.0, 0.0, -1.0],
+                vertical_fov_degrees: 90.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let frustum = Frustum::new(options).unwrap();
+        assert!(frustum.intersects([-0.5, -0.5, -2.0], [0.5, 0.5, -1.0]));
+        assert!(frustum.intersects([-10.0; 3], [10.0; 3]));
+        assert!(frustum.intersects([1.0, 0.0, -1.0], [2.0, 1.0, -0.5]));
+        assert!(frustum.intersects([0.0, 0.0, -0.002], [0.1, 0.1, 0.0]));
+        for (min, max) in [
+            ([3.0, 0.0, -2.0], [4.0, 1.0, -1.0]),
+            ([-4.0, 0.0, -2.0], [-3.0, 1.0, -1.0]),
+            ([0.0, 3.0, -2.0], [1.0, 4.0, -1.0]),
+            ([0.0, -4.0, -2.0], [1.0, -3.0, -1.0]),
+            ([-1.0, -1.0, 1.0], [1.0, 1.0, 2.0]),
+            ([-1.0, -1.0, -10002.0], [1.0, 1.0, -10001.0]),
+        ] {
+            assert!(!frustum.intersects(min, max), "{min:?}..{max:?}");
+        }
+        let wide = Frustum::new(RenderOptions {
+            width: 200,
+            ..options
+        })
+        .unwrap();
+        assert!(wide.intersects([3.0, 0.0, -2.0], [4.0, 1.0, -1.0]));
+        let rotated = Frustum::new(RenderOptions {
+            camera: crate::Camera {
+                position: [10.0, 0.0, 0.0],
+                target: [11.0, 0.0, 0.0],
+                ..options.camera
+            },
+            ..options
+        })
+        .unwrap();
+        assert!(rotated.intersects([11.0, -0.5, -0.5], [12.0, 0.5, 0.5]));
+        assert!(!rotated.intersects([8.0, -0.5, -0.5], [9.0, 0.5, 0.5]));
+    }
 
     #[test]
     fn validates_large_grids_without_a_device() {

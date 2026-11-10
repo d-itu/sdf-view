@@ -8,10 +8,25 @@ use crate::{Antialiasing, Error, RenderOptions};
 /// Create and use it with the same device and an sRGB render target.
 /// Update parameters before submitting a draw; do not update between unsubmitted draws.
 pub struct ScenePipeline {
-    pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
-    mesh: Option<crate::mesh::Mesh>,
+    backend: Backend,
+}
+
+enum Backend {
+    Raymarch {
+        pipeline: wgpu::RenderPipeline,
+        bind_group: wgpu::BindGroup,
+    },
+    Mesh(Box<crate::mesh::Mesh>),
+}
+
+fn scene_uniform(device: &wgpu::Device) -> wgpu::Buffer {
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("SDF scene parameters"),
+        size: 144,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }
 
 impl ScenePipeline {
@@ -24,16 +39,12 @@ impl ScenePipeline {
         options: crate::MeshOptions,
     ) -> Result<Self, Error> {
         options.validate()?;
-        let mut scene = Self::new(device, "float sdf(vec3 p) { return 1.0; }", format)?;
-        scene.mesh = Some(crate::mesh::Mesh::new(
-            device,
-            queue,
-            sdf,
-            format,
-            options,
-            &scene.uniform,
-        )?);
-        Ok(scene)
+        let uniform = scene_uniform(device);
+        let mesh = crate::mesh::Mesh::new(device, queue, sdf, format, options, &uniform)?;
+        Ok(Self {
+            uniform,
+            backend: Backend::Mesh(Box::new(mesh)),
+        })
     }
     /// Compile a snippet for the target format. Failed compilation leaves existing pipelines intact.
     pub fn new(
@@ -133,12 +144,7 @@ impl ScenePipeline {
             return Err(Error::Gpu(error));
         }
 
-        let uniform = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("SDF scene parameters"),
-            size: 144,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let uniform = scene_uniform(device);
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("SDF scene"),
             layout: &bind_layout,
@@ -148,10 +154,11 @@ impl ScenePipeline {
             }],
         });
         Ok(Self {
-            pipeline,
             uniform,
-            bind_group,
-            mesh: None,
+            backend: Backend::Raymarch {
+                pipeline,
+                bind_group,
+            },
         })
     }
 
@@ -184,7 +191,7 @@ impl ScenePipeline {
             ),
         };
         options.validate()?;
-        if let Some(mesh) = &self.mesh {
+        if let Backend::Mesh(mesh) = &self.backend {
             mesh.update(options)?;
         }
         let basis = options.camera.basis()?;
@@ -240,10 +247,16 @@ impl ScenePipeline {
 
     /// Record a fullscreen draw into a target matching the pipeline format.
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
-        if let Some(mesh) = &self.mesh {
-            mesh.draw(encoder, view);
-            return;
-        }
+        let (pipeline, bind_group) = match &self.backend {
+            Backend::Mesh(mesh) => {
+                mesh.draw(encoder, view);
+                return;
+            }
+            Backend::Raymarch {
+                pipeline,
+                bind_group,
+            } => (pipeline, bind_group),
+        };
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("SDF render pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -257,8 +270,8 @@ impl ScenePipeline {
             })],
             ..Default::default()
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_pipeline(pipeline);
+        pass.set_bind_group(0, bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }

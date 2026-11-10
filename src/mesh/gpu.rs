@@ -8,6 +8,7 @@ use super::MeshOptions;
 use crate::{Error, MeshError};
 
 const BRICK: u32 = 32;
+// Bound scratch memory while amortizing synchronous count readback.
 const BATCH: usize = 8;
 const SAMPLE_BYTES: u64 = 35 * 35 * 35 * 4;
 const CELL_BYTES: u64 = 32 * 32 * 32 * 8;
@@ -15,6 +16,8 @@ const CELL_BYTES: u64 = 32 * 32 * 32 * 8;
 pub(super) struct Chunk {
     pub vertices: wgpu::Buffer,
     pub count: u32,
+    pub min: [f32; 3],
+    pub max: [f32; 3],
 }
 
 struct Slot {
@@ -62,12 +65,11 @@ fn bind(
 }
 
 fn dispatch(
-    encoder: &mut wgpu::CommandEncoder,
+    pass: &mut wgpu::ComputePass<'_>,
     pipeline: &wgpu::ComputePipeline,
     bind: &wgpu::BindGroup,
     groups: [u32; 3],
 ) {
-    let mut pass = encoder.begin_compute_pass(&Default::default());
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, bind, &[]);
     pass.dispatch_workgroups(groups[0], groups[1], groups[2]);
@@ -101,6 +103,9 @@ pub(super) fn extract(
     options: MeshOptions,
 ) -> Result<Vec<Chunk>, Error> {
     options.validate()?;
+    let side = u64::from(options.resolution.div_ceil(BRICK));
+    let bricks = side.checked_pow(3).ok_or(MeshError::SamplingBufferLimit)?;
+    let batch = bricks.min(BATCH as u64) as usize;
     let limit = device
         .limits()
         .max_buffer_size
@@ -217,7 +222,7 @@ pub(super) fn extract(
         24,
         wgpu::BufferUsages::STORAGE,
     );
-    let slots: Vec<_> = (0..BATCH)
+    let slots: Vec<_> = (0..batch)
         .map(|_| {
             let params = buffer(
                 device,
@@ -275,14 +280,12 @@ pub(super) fn extract(
     let counts = buffer(
         device,
         "batch counts readback",
-        BATCH as u64 * 8,
+        batch as u64 * 8,
         wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
     );
-    let side = u64::from(options.resolution.div_ceil(BRICK));
-    let bricks = side.checked_pow(3).ok_or(MeshError::SamplingBufferLimit)?;
     let mut chunks = Vec::new();
-    for first in (0..bricks).step_by(BATCH) {
-        let active = (bricks - first).min(BATCH as u64) as usize;
+    for first in (0..bricks).step_by(batch) {
+        let active = (bricks - first).min(batch as u64) as usize;
         let mut encoder = device.create_command_encoder(&Default::default());
         for (i, slot) in slots[..active].iter().enumerate() {
             let index = first + i as u64;
@@ -303,9 +306,13 @@ pub(super) fn extract(
                 .collect();
             queue.write_buffer(&slot.params, 0, &bytes);
             encoder.clear_buffer(&slot.status, 0, None);
-            dispatch(&mut encoder, &sampling, &slot.sampling, [9, 9, 9]);
-            dispatch(&mut encoder, &classify, &slot.compute, [128, 1, 1]);
-            dispatch(&mut encoder, &scan, &slot.compute, [1, 1, 1]);
+            {
+                // Dispatch boundaries retain storage dependencies without ending the pass.
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                dispatch(&mut pass, &sampling, &slot.sampling, [9, 9, 9]);
+                dispatch(&mut pass, &classify, &slot.compute, [128, 1, 1]);
+                dispatch(&mut pass, &scan, &slot.compute, [1, 1, 1]);
+            }
             encoder.copy_buffer_to_buffer(&slot.status, 0, &counts, i as u64 * 8, 8);
         }
         queue.submit([encoder.finish()]);
@@ -344,8 +351,28 @@ pub(super) fn extract(
                     &vertices,
                 ],
             );
-            dispatch(&mut encoder, &generate, &output, [128, 1, 1]);
-            chunks.push(Chunk { vertices, count });
+            {
+                let mut pass = encoder.begin_compute_pass(&Default::default());
+                dispatch(&mut pass, &generate, &output, [128, 1, 1]);
+            }
+            let index = first + i as u64;
+            let origin = [index % side, (index / side) % side, index / (side * side)]
+                .map(|v| v * u64::from(BRICK));
+            let point = |end: bool| {
+                [0, 1, 2].map(|axis| {
+                    let grid = (origin[axis] + if end { u64::from(BRICK) } else { 0 })
+                        .min(u64::from(options.resolution));
+                    options.min[axis]
+                        + grid as f32 / options.resolution as f32
+                            * (options.max[axis] - options.min[axis])
+                })
+            };
+            chunks.push(Chunk {
+                vertices,
+                count,
+                min: point(false),
+                max: point(true),
+            });
         }
         queue.submit([encoder.finish()]);
     }
@@ -452,7 +479,6 @@ mod tests {
             min: [0.0; 3],
             max: [16.0; 3],
             resolution: 16,
-            ..Default::default()
         };
         compare(
             &renderer,
@@ -475,7 +501,6 @@ mod tests {
             min: [0.0; 3],
             max: [67.0; 3],
             resolution: 67,
-            ..Default::default()
         };
         compare(
             &renderer,
