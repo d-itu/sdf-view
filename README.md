@@ -20,6 +20,8 @@ with `sdf_view_` are reserved. Only Naga's supported GLSL subset is available.
 sdf-view sphere.glsl                                      # Interactive preview
 sdf-view sphere.glsl -o sphere.png --antialiasing 4         # Save PNG
 sdf-view sphere.glsl --background checkerboard            # Preview background
+sdf-view sphere.glsl --mesh                              # Rasterized mesh preview
+sdf-view sphere.glsl --mesh --mesh-resolution 128 -o mesh.png
 sdf-view sphere.glsl -o sphere.png --object-color 'rgb(255,96,32)'
 sdf-view --help
 ```
@@ -52,6 +54,9 @@ pixels; resizing updates the view. Transparent windows require compositor suppor
 | --- | --- |
 | `--width`, `--height` | `512`, positive pixels within device limits |
 | `--antialiasing` | `1` or `4` rays per pixel; default `1` |
+| `--mesh` | Extract a marching-cubes mesh and rasterize it instead of sphere tracing |
+| `--mesh-resolution` | `64` cells per axis; accepts `2`–`256`, requires `--mesh` |
+| `--mesh-min`, `--mesh-max` | `-2,-2,-2`, `2,2,2`; world-space sampling bounds, requires `--mesh` |
 | `--background` | `transparent` (default), `checkerboard`, or a color |
 | `--object-color` | `rgb(137,196,237)` |
 | `--light-color` | `white` |
@@ -67,6 +72,15 @@ Lighting is computed in linear space. Vectors are comma-separated finite numbers
 in right-handed coordinates. Camera position and target must differ; up must be
 nonzero and not parallel to the viewing direction. Light direction must be nonzero.
 Four-ray antialiasing smooths silhouettes with partial transparency.
+
+Mesh mode samples the GLSL SDF on the GPU, extracts the zero isosurface with
+marching cubes on the CPU, and uploads triangles for depth-tested GPU rasterization.
+Only surfaces within the sampling bounds are extracted; adjust the bounds for
+larger or translated objects. Increasing resolution captures finer features at
+the cost of cubic sampling work and memory. Nonfinite SDF samples are rejected.
+Meshes are reused while moving the camera and rebuilt when pressing `R`.
+Lighting uses interpolated SDF gradients. Four-sample antialiasing uses a 2-by-2
+supersampled raster target and preserves transparent coverage.
 
 Logs go to stderr. `RUST_LOG=debug` enables diagnostics; the default filter is
 `warn,sdf_view=info`. Exit codes: `0` success, `2` invalid arguments/settings,

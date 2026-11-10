@@ -10,12 +10,14 @@ use futures::{channel::oneshot, executor::block_on};
 
 mod pipeline;
 pub use pipeline::ScenePipeline;
+mod mesh;
+pub use mesh::MeshOptions;
 
 mod scene;
 pub use scene::{Camera, DirectionalLight};
 
 mod error;
-pub use error::{Error, SettingsError};
+pub use error::{Error, MeshError, SettingsError};
 
 /// Number of subpixel rays traced per output pixel.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -156,6 +158,28 @@ impl Renderer {
         self.with_error_scope(|| {
             let pipeline =
                 ScenePipeline::new(&self.device, sdf, wgpu::TextureFormat::Rgba8UnormSrgb)?;
+            self.render_inner(&pipeline, options)
+        })
+    }
+
+    /// Extract a marching-cubes mesh and rasterize it into a PNG-compatible image.
+    /// Readback layout and colors follow [`Self::render`].
+    pub fn render_mesh(
+        &self,
+        sdf: &str,
+        options: RenderOptions,
+        mesh: MeshOptions,
+    ) -> Result<wgpu::BufferView, Error> {
+        options.validate()?;
+        mesh.validate()?;
+        self.with_error_scope(|| {
+            let pipeline = ScenePipeline::new_mesh(
+                &self.device,
+                &self.queue,
+                sdf,
+                wgpu::TextureFormat::Rgba8UnormSrgb,
+                mesh,
+            )?;
             self.render_inner(&pipeline, options)
         })
     }

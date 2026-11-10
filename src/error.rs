@@ -1,6 +1,8 @@
 /// Errors from initialization or rendering.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("mesh extraction failed: {0}")]
+    Mesh(#[from] MeshError),
     #[error(transparent)]
     Adapter(#[from] wgpu::RequestAdapterError),
     #[error(transparent)]
@@ -17,9 +19,28 @@ pub enum Error {
     MapRange(#[from] wgpu::MapRangeError),
 }
 
+/// Errors specific to mesh extraction and rasterization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum MeshError {
+    #[error("sampling grid exceeds device buffer limits")]
+    SamplingBufferLimit,
+    #[error("user snippets must not declare resource bindings")]
+    ResourceBindings,
+    #[error("SDF returned nonfinite samples within the mesh bounds")]
+    NonFiniteSamples,
+    #[error("mesh exceeds device vertex buffer limits; reduce resolution")]
+    VertexBufferLimit,
+    #[error("image dimensions overflow")]
+    ImageDimensionsOverflow,
+    #[error("supersampled image exceeds device texture limits")]
+    TextureDimensionLimit,
+}
+
 /// Invalid dimensions, camera settings, or lighting parameters.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SettingsError {
+    #[error("mesh requires 2..=256 cells per axis and finite, increasing bounds")]
+    InvalidMesh,
     /// Either image dimension is zero.
     #[error("width and height must be nonzero")]
     ZeroDimensions,

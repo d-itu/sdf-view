@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, io};
 
 use futures::executor::block_on;
 
@@ -11,9 +11,30 @@ pub struct ScenePipeline {
     pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
+    mesh: Option<crate::mesh::Mesh>,
 }
 
 impl ScenePipeline {
+    /// Extract a static marching-cubes mesh and create a rasterization pipeline.
+    pub fn new_mesh(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        sdf: &str,
+        format: wgpu::TextureFormat,
+        options: crate::MeshOptions,
+    ) -> Result<Self, Error> {
+        options.validate()?;
+        let mut scene = Self::new(device, "float sdf(vec3 p) { return 1.0; }", format)?;
+        scene.mesh = Some(crate::mesh::Mesh::new(
+            device,
+            queue,
+            sdf,
+            format,
+            options,
+            &scene.uniform,
+        )?);
+        Ok(scene)
+    }
     /// Compile a snippet for the target format. Failed compilation leaves existing pipelines intact.
     pub fn new(
         device: &wgpu::Device,
@@ -47,10 +68,7 @@ impl ScenePipeline {
             let message = "user snippets must not declare resource bindings";
             return Err(Error::Gpu(wgpu::Error::Validation {
                 description: message.into(),
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    message,
-                )),
+                source: Box::new(io::Error::new(io::ErrorKind::InvalidInput, message)),
             }));
         }
         let bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -133,6 +151,7 @@ impl ScenePipeline {
             pipeline,
             uniform,
             bind_group,
+            mesh: None,
         })
     }
 
@@ -165,6 +184,9 @@ impl ScenePipeline {
             ),
         };
         options.validate()?;
+        if let Some(mesh) = &self.mesh {
+            mesh.update(options)?;
+        }
         let basis = options.camera.basis()?;
         let light = options.light.normalized_direction()?;
         let light_color = options.light.color.map(|v| v.clamp(0.0, 1.0));
@@ -218,6 +240,10 @@ impl ScenePipeline {
 
     /// Record a fullscreen draw into a target matching the pipeline format.
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if let Some(mesh) = &self.mesh {
+            mesh.draw(encoder, view);
+            return;
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("SDF render pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

@@ -71,7 +71,7 @@ impl Preview {
                 );
             }
         }
-        let pipeline = ScenePipeline::new(renderer.device(), source, config.format)?;
+        let pipeline = args.pipeline(&renderer, source, config.format)?;
         let mut preview = Self {
             window,
             instance,
@@ -194,8 +194,9 @@ impl App {
     fn reload(&mut self) -> Result<()> {
         let source = fs::read_to_string(&self.args.input)?;
         if let Some(preview) = &mut self.preview {
-            let pipeline =
-                ScenePipeline::new(preview.renderer.device(), &source, preview.config.format)?;
+            let pipeline = self
+                .args
+                .pipeline(&preview.renderer, &source, preview.config.format)?;
             preview.pipeline = pipeline;
             self.source = source;
             preview.window.request_redraw();

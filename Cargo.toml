@@ -10,6 +10,7 @@ default-members = [".", "cli"]
 
 [dependencies]
 futures = { version = "0.3.34", default-features = false, features = ["executor", "std"] }
+marching-cubes = "0.1.2"
 thiserror = "2.0.21"
 wgpu = { version = "30.0.1", features = ["glsl", "naga-ir"] }
 

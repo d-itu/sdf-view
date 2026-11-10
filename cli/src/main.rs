@@ -9,7 +9,11 @@ use std::{
 mod interactive;
 
 use clap::Parser;
-use sdf_view::{Antialiasing, Background, Camera, DirectionalLight, RenderOptions, Renderer};
+#[cfg(feature = "interactive")]
+use sdf_view::ScenePipeline;
+use sdf_view::{
+    Antialiasing, Background, Camera, DirectionalLight, MeshOptions, RenderOptions, Renderer,
+};
 
 mod error;
 use error::{Error, InvalidBackground, InvalidColor};
@@ -47,6 +51,22 @@ struct Args {
     /// Rays per pixel: 1 disables antialiasing, 4 uses a 2-by-2 grid
     #[arg(long, default_value = "1", value_parser = parse_antialiasing, value_name = "1|4")]
     antialiasing: Antialiasing,
+
+    /// Extract a marching-cubes mesh and render it with rasterization
+    #[arg(long)]
+    mesh: bool,
+
+    /// Marching-cubes cells per axis
+    #[arg(long, default_value_t = 64, requires = "mesh")]
+    mesh_resolution: u32,
+
+    /// Minimum corner of the mesh sampling bounds
+    #[arg(long, default_value = "-2,-2,-2", value_parser = parse_vec3, value_name = "X,Y,Z", allow_hyphen_values = true, requires = "mesh")]
+    mesh_min: [f32; 3],
+
+    /// Maximum corner of the mesh sampling bounds
+    #[arg(long, default_value = "2,2,2", value_parser = parse_vec3, value_name = "X,Y,Z", allow_hyphen_values = true, requires = "mesh")]
+    mesh_max: [f32; 3],
 
     /// Camera position in world coordinates
     #[arg(long, default_value = "0,0,3", value_parser = parse_vec3, value_name = "X,Y,Z", allow_hyphen_values = true)]
@@ -162,6 +182,34 @@ fn parse_vec3(value: &str) -> Result<[f32; 3], &'static str> {
 }
 
 impl Args {
+    fn mesh_options(&self) -> MeshOptions {
+        MeshOptions {
+            min: self.mesh_min,
+            max: self.mesh_max,
+            resolution: self.mesh_resolution,
+        }
+    }
+
+    #[cfg(feature = "interactive")]
+    fn pipeline(
+        &self,
+        renderer: &Renderer,
+        source: &str,
+        format: wgpu::TextureFormat,
+    ) -> Result<ScenePipeline, Error> {
+        Ok(if self.mesh {
+            ScenePipeline::new_mesh(
+                renderer.device(),
+                renderer.queue(),
+                source,
+                format,
+                self.mesh_options(),
+            )?
+        } else {
+            ScenePipeline::new(renderer.device(), source, format)?
+        })
+    }
+
     fn render_options(&self) -> RenderOptions {
         RenderOptions {
             width: self.width,
@@ -196,7 +244,11 @@ fn run(args: Args) -> Result<(), Error> {
         .as_ref()
         .expect("clap requires output in batch mode");
     let renderer = Renderer::new()?;
-    let pixels = renderer.render(&source, args.render_options())?;
+    let pixels = if args.mesh {
+        renderer.render_mesh(&source, args.render_options(), args.mesh_options())?
+    } else {
+        renderer.render(&source, args.render_options())?
+    };
     save_png(args.width, args.height, &pixels, output)?;
     tracing::info!(path = %output.display(), width = args.width, height = args.height, "Saved PNG");
     Ok(())
@@ -250,7 +302,13 @@ fn main() -> ExitCode {
         .with_ansi(io::stderr().is_terminal())
         .without_time()
         .init();
-    if let Err(error) = args.render_options().validate() {
+    if let Err(error) = args.render_options().validate().and_then(|()| {
+        if args.mesh {
+            args.mesh_options().validate()
+        } else {
+            Ok(())
+        }
+    }) {
         let error = Error::Settings(error);
         tracing::error!("{error}");
         return error.exit_code();
@@ -266,6 +324,37 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn mesh_arguments() {
+        use super::*;
+        let args =
+            Args::try_parse_from(["sdf-view", "sphere.glsl", "-o", "out.png", "--mesh"]).unwrap();
+        assert!(args.mesh);
+        assert_eq!(args.mesh_options().resolution, 64);
+        for extra in [
+            vec!["--mesh-resolution", "32"],
+            vec!["--mesh", "--mesh-resolution", "invalid"],
+        ] {
+            let mut argv = vec!["sdf-view", "sphere.glsl", "-o", "out.png"];
+            argv.extend(extra);
+            assert!(Args::try_parse_from(argv).is_err());
+        }
+        let args = Args::try_parse_from([
+            "sdf-view",
+            "sphere.glsl",
+            "-o",
+            "out.png",
+            "--mesh",
+            "--mesh-resolution",
+            "257",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.mesh_options().validate(),
+            Err(sdf_view::SettingsError::InvalidMesh)
+        );
+    }
+
     #[test]
     fn color_arguments_share_srgb_format() {
         use super::*;
